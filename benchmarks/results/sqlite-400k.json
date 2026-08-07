@@ -1,0 +1,15 @@
+{
+  "rows_requested": 400000,
+  "rows_persisted": 400000,
+  "duration_seconds": 60.919,
+  "peak_python_memory_mib": 0.006,
+  "memory_method": "tracemalloc; excludes native SQLite page cache",
+  "database_size_mib": 131.289,
+  "environment": {
+    "python": "3.14.6",
+    "python_implementation": "CPython",
+    "sqlite": "3.50.4",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel"
+  }
+}

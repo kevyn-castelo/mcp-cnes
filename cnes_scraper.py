@@ -279,7 +279,7 @@ class CNESScraper:
                 }
             },
             "_source": [
-                "CNES", "PROFISSIONAL_NOME", "PROFISSIONAL_CBO", "PROFISSIONAL_CNS"
+                "CNES", "PROFISSIONAL_NOME", "PROFISSIONAL_CBO"
             ]
         }
         return query

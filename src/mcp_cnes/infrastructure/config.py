@@ -67,6 +67,9 @@ class Settings:
     private_nature_codes: tuple[str, ...] = DEFAULT_PRIVATE_NATURE_CODES
     director_cbo_codes: tuple[str, ...] = DEFAULT_DIRECTOR_CBO_CODES
     data_dir: Path = Path("downloads")
+    database_path: Path = Path("downloads/cnes.sqlite3")
+    max_csv_size_bytes: int = 100 * 1024 * 1024
+    allowed_csv_files: tuple[str, ...] = ()
     output_dir: Path = Path(".")
     base_url: str = "https://elasticnes.saude.gov.br"
     kibana_api: str = "https://elasticnes.saude.gov.br/kibana/api/console/proxy"
@@ -92,6 +95,7 @@ class Settings:
             ("request_timeout", self.request_timeout),
             ("browser_timeout_ms", self.browser_timeout_ms),
             ("max_retries", self.max_retries),
+            ("max_csv_size_bytes", self.max_csv_size_bytes),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ConfigurationError(f"{name} deve ser um inteiro maior que zero")
@@ -169,6 +173,15 @@ class Settings:
                 "MCP_CNES_DIRECTOR_CBO_CODES", default.director_cbo_codes
             ),
             data_dir=Path(env.get("MCP_CNES_DATA_DIR", str(default.data_dir))),
+            database_path=Path(
+                env.get("MCP_CNES_DATABASE_PATH", str(default.database_path))
+            ),
+            max_csv_size_bytes=integer(
+                "MCP_CNES_MAX_CSV_SIZE_BYTES", default.max_csv_size_bytes
+            ),
+            allowed_csv_files=codes(
+                "MCP_CNES_ALLOWED_CSV_FILES", default.allowed_csv_files
+            ),
             output_dir=Path(env.get("MCP_CNES_OUTPUT_DIR", str(default.output_dir))),
             base_url=env.get("MCP_CNES_BASE_URL", default.base_url),
             kibana_api=env.get("MCP_CNES_KIBANA_API", default.kibana_api),

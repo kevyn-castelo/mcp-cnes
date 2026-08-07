@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import logging
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from mcp_cnes.domain.errors import CNESDataLoadError, DomainValidationError
-from mcp_cnes.domain.models import HospitalInfo, ImportBatch, LoadSummary
+from mcp_cnes.domain.models import (
+    HospitalInfo,
+    ImportBatch,
+    LoadSummary,
+    RejectionReason,
+)
 from mcp_cnes.domain.rules import normalize_column_name, parse_bool, parse_non_negative_int
 
 logger = logging.getLogger(__name__)
@@ -37,6 +44,7 @@ class CsvCNESImporter:
         staged: dict[tuple[str, str], HospitalInfo] = {}
         seen_rows: set[tuple[tuple[str, str | None], ...]] = set()
         rows_read = rows_rejected = rows_ignored = 0
+        rejection_reasons: Counter[str] = Counter()
 
         try:
             with filepath.open("r", encoding="utf-8-sig", newline="") as file:
@@ -59,12 +67,14 @@ class CsvCNESImporter:
                     seen_rows.add(signature)
                     try:
                         hospital = self._to_hospital(row, headers)
-                    except DomainValidationError as exc:
+                    except DomainValidationError:
                         rows_rejected += 1
-                        logger.warning("Linha %s rejeitada: %s", rows_read, exc)
+                        rejection_reasons["valor_invalido"] += 1
+                        logger.warning("Linha %s rejeitada por valor invalido", rows_read)
                         continue
                     if hospital is None:
                         rows_rejected += 1
+                        rejection_reasons["cnes_ausente"] += 1
                         continue
                     self._merge(staged, hospital)
         except CNESDataLoadError:
@@ -73,8 +83,22 @@ class CsvCNESImporter:
             raise CNESDataLoadError(f"Não foi possível carregar o CSV: {exc}") from exc
 
         hospitals = tuple(staged.values())
-        summary = LoadSummary(len(hospitals), rows_read, rows_rejected, rows_ignored)
-        return ImportBatch(hospitals, summary, str(filepath))
+        summary = LoadSummary(
+            len(hospitals),
+            rows_read,
+            rows_rejected,
+            rows_ignored,
+            rejection_reasons=tuple(
+                RejectionReason(code, count)
+                for code, count in sorted(rejection_reasons.items())
+            ),
+        )
+        try:
+            with filepath.open("rb") as source:
+                source_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+        except OSError as exc:
+            raise CNESDataLoadError("Nao foi possivel calcular a identidade do CSV") from exc
+        return ImportBatch(hospitals, summary, str(filepath), source_sha256)
 
     @staticmethod
     def _to_hospital(

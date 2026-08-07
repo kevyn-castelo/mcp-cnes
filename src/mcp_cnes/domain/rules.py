@@ -16,6 +16,13 @@ def normalize_column_name(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", ascii_value.upper()).strip("_")
 
 
+def normalize_search_text(value: str) -> str:
+    """Normaliza texto livre para comparacoes e indices persistidos."""
+
+    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    return " ".join(ascii_value.casefold().split())
+
+
 def parse_non_negative_int(value: Any, field_name: str) -> int:
     """Converte números do CNES sem aceitar valores negativos."""
 

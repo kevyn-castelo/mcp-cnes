@@ -40,9 +40,12 @@ class SearchByMunicipality:
         _validate_limit(limit)
         validate_bed_range(min_beds, max_beds)
         matches = tuple(
-            self._repository.search_by_municipality(municipality, min_beds, max_beds)
+            self._repository.search_by_municipality(
+                municipality, min_beds, max_beds, limit
+            )
         )
-        return SearchResult(matches[:limit], len(matches), min_beds, max_beds)
+        total = self._repository.count_by_municipality(municipality, min_beds, max_beds)
+        return SearchResult(matches, total, min_beds, max_beds)
 
 
 class SearchByUF:
@@ -58,8 +61,9 @@ class SearchByUF:
     ) -> SearchResult:
         _validate_limit(limit)
         validate_bed_range(min_beds, max_beds)
-        matches = tuple(self._repository.search_by_uf(uf, min_beds, max_beds))
-        return SearchResult(matches[:limit], len(matches), min_beds, max_beds)
+        matches = tuple(self._repository.search_by_uf(uf, min_beds, max_beds, limit))
+        total = self._repository.count_by_uf(uf, min_beds, max_beds)
+        return SearchResult(matches, total, min_beds, max_beds)
 
 
 class SearchByCNES:

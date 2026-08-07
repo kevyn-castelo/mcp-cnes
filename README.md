@@ -44,7 +44,7 @@ uv run pytest
 uv run pytest --cov=mcp_cnes --cov-report=term-missing
 
 # Qualidade estática
-uv run ruff check src tests
+uv run ruff check src tests mcp_server.py benchmarks
 uv run pyright
 
 # Servidor MCP oficial via stdio
@@ -57,6 +57,10 @@ uv run mcp dev src/mcp_cnes/mcp_app.py
 Os testes de contrato em `tests/fixtures/contracts/` congelam os nomes, schemas e
 exemplos de resposta das seis ferramentas existentes. Alterações nessas fixtures
 devem ser revisadas como mudanças de contrato.
+
+O benchmark de persistência pode ser reproduzido com
+`uv run python benchmarks/benchmark_sqlite_import.py --rows 400000`; a última
+medição registrada fica em `benchmarks/results/sqlite-400k.json`.
 
 O snapshot `sdk-tools.snapshot.json` protege os schemas completos por SHA-256 e
 mantém visíveis propriedades de entrada/saída e campos obrigatórios.
@@ -95,11 +99,19 @@ iniciar rede, browser ou processamento de arquivos. Os principais nomes são:
 | `MCP_CNES_PRIVATE_NATURE_CODES` | códigos separados por vírgula |
 | `MCP_CNES_DIRECTOR_CBO_CODES` | códigos separados por vírgula |
 | `MCP_CNES_DATA_DIR` / `MCP_CNES_OUTPUT_DIR` | `downloads` / `.` |
+| `MCP_CNES_DATABASE_PATH` | `downloads/cnes.sqlite3` |
+| `MCP_CNES_MAX_CSV_SIZE_BYTES` | `104857600` |
+| `MCP_CNES_ALLOWED_CSV_FILES` | vazio (todos os CSVs confinados ao diretório) |
 | `MCP_CNES_BASE_URL`, `MCP_CNES_KIBANA_API`, `MCP_CNES_DASHBOARD_URL` | ElastiCNES |
 | `MCP_CNES_REQUEST_TIMEOUT` / `MCP_CNES_BROWSER_TIMEOUT_MS` | `60` / `60000` |
 
 Delays e retries também podem ser definidos com `MCP_CNES_MIN_DELAY`,
 `MCP_CNES_MAX_DELAY`, `MCP_CNES_MAX_RETRIES` e `MCP_CNES_RETRY_DELAY`.
+
+A importação aceita somente arquivos `.csv` resolvidos dentro de
+`MCP_CNES_DATA_DIR`. Quando `MCP_CNES_ALLOWED_CSV_FILES` é definido, os nomes
+permitidos devem ser separados por vírgula. Travessia de diretório, escape por
+link simbólico e arquivos acima do limite são rejeitados antes da leitura.
 
 ## Faixa de leitos configurável
 
@@ -196,7 +208,7 @@ mcp_cnes/
 ├── src/mcp_cnes/
 │   ├── domain/                # modelos, regras puras e erros
 │   ├── application/           # casos de uso e Protocols
-│   ├── infrastructure/        # settings, CSV e repositório em memória
+│   ├── infrastructure/        # settings, importação segura, memória e SQLite
 │   ├── interfaces/mcp/        # servidor, tools e schemas do SDK oficial
 │   ├── mcp_app.py             # objeto descoberto pelo MCP CLI/Inspector
 │   └── __main__.py            # entrypoint stdio

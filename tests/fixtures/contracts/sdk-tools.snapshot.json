@@ -5,13 +5,16 @@
     "input_required": ["filepath"],
     "output_properties": [
       "success",
+      "lote_id",
       "registros_carregados",
       "linhas_lidas",
+      "linhas_aceitas",
       "linhas_rejeitadas",
       "linhas_ignoradas",
+      "motivos_rejeicao",
       "mensagem"
     ],
-    "sha256": "b5a1703199b469c964396c653ba6bfc270c22a9d52a45e9800cba16b4acfa0de"
+    "sha256": "a613d80bc51b40006e95db6089e4165182287e41f06db4c99f17d59ee2fadbf4"
   },
   {
     "name": "cnes_search_municipio",
