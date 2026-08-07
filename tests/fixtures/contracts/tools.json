@@ -1,0 +1,106 @@
+[
+  {
+    "name": "cnes_load_data",
+    "description": "Carrega dados do CNES a partir de um arquivo CSV exportado do dashboard Kibana.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filepath": {
+          "type": "string",
+          "description": "Caminho para o arquivo CSV"
+        }
+      },
+      "required": ["filepath"]
+    }
+  },
+  {
+    "name": "cnes_search_municipio",
+    "description": "Busca estabelecimentos de saúde por nome do município.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "municipio": {
+          "type": "string",
+          "description": "Nome do município (parcial ou completo)"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Número máximo de resultados (padrão: 50)",
+          "default": 50,
+          "minimum": 1
+        },
+        "min_leitos": {
+          "type": "integer",
+          "description": "Quantidade mínima inclusiva de leitos",
+          "minimum": 0
+        },
+        "max_leitos": {
+          "type": "integer",
+          "description": "Quantidade máxima inclusiva de leitos",
+          "minimum": 0
+        }
+      },
+      "required": ["municipio"]
+    }
+  },
+  {
+    "name": "cnes_search_cnes",
+    "description": "Busca estabelecimento de saúde pelo código CNES.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cnes": {
+          "type": "string",
+          "description": "Código CNES do estabelecimento (7 dígitos)"
+        }
+      },
+      "required": ["cnes"]
+    }
+  },
+  {
+    "name": "cnes_search_uf",
+    "description": "Busca estabelecimentos de saúde por UF (estado).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "uf": {
+          "type": "string",
+          "description": "Sigla do estado (ex: SP, RJ, MG)"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Número máximo de resultados (padrão: 100)",
+          "default": 100,
+          "minimum": 1
+        },
+        "min_leitos": {
+          "type": "integer",
+          "description": "Quantidade mínima inclusiva de leitos",
+          "minimum": 0
+        },
+        "max_leitos": {
+          "type": "integer",
+          "description": "Quantidade máxima inclusiva de leitos",
+          "minimum": 0
+        }
+      },
+      "required": ["uf"]
+    }
+  },
+  {
+    "name": "cnes_statistics",
+    "description": "Retorna estatísticas gerais dos dados carregados.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "cnes_download_instructions",
+    "description": "Retorna instruções para download manual de dados do CNES.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+]

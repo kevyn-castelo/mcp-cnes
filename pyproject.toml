@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-cnes"
+version = "0.1.0"
+description = "Servidor MCP para consulta de dados do Cadastro Nacional de Estabelecimentos de Saúde"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=2.0.0,<3",
+    "pandas>=2.0,<4",
+    "pydantic>=2.11,<3",
+    "requests>=2.31,<3",
+    "tqdm>=4.66,<5",
+]
+
+[project.scripts]
+mcp-cnes = "mcp_cnes.__main__:main"
+
+[dependency-groups]
+dev = [
+    "jsonschema>=4.25,<5",
+    "pyright>=1.1.400,<2",
+    "pytest>=8.4,<10",
+    "pytest-asyncio>=0.24,<2",
+    "pytest-cov>=6,<8",
+    "ruff>=0.14,<1",
+]
+browser = [
+    "playwright>=1.55,<2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_cnes"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+asyncio_mode = "auto"
+pythonpath = [".", "src"]
+testpaths = ["tests"]
+markers = [
+    "live: executa integração real com serviços externos; nunca roda na suíte padrão",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.pyright]
+include = ["src", "tests"]
+exclude = [".venv", "downloads"]
+extraPaths = [".", "src"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = false
+
+[tool.coverage.run]
+branch = true
+source = ["mcp_cnes"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

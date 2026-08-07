@@ -1,0 +1,211 @@
+# MCP CNES — Servidor de dados do CNES
+
+Servidor MCP para carregar e consultar dados públicos do Cadastro Nacional de
+Estabelecimentos de Saúde (CNES). O caminho ativo usa o SDK Python MCP v2 oficial
+com transporte `stdio`; `mcp_server.py` permanece temporariamente como fallback
+legado até o cutover.
+
+## Ferramentas disponíveis
+
+| Ferramenta | Descrição |
+|---|---|
+| `cnes_load_data` | Carrega um CSV exportado do dashboard CNES |
+| `cnes_search_municipio` | Busca estabelecimentos por município |
+| `cnes_search_cnes` | Busca um estabelecimento pelo código CNES |
+| `cnes_search_uf` | Busca estabelecimentos por UF |
+| `cnes_statistics` | Retorna estatísticas dos dados carregados |
+| `cnes_download_instructions` | Explica como obter o CSV manualmente |
+
+## Requisitos
+
+- [uv](https://docs.astral.sh/uv/) 0.12 ou superior.
+- Python 3.11 ou superior. O arquivo `.python-version` fixa Python 3.14 para o
+  ambiente de desenvolvimento reproduzível.
+
+Não use o `.venv` de outra máquina. O `uv` cria ou recria o ambiente local a
+partir de `pyproject.toml` e `uv.lock`.
+
+## Bootstrap reproduzível
+
+```powershell
+uv sync --locked
+```
+
+`pyproject.toml` é a fonte canônica das dependências e `uv.lock` fixa as versões
+resolvidas. O antigo `requirements.txt` permanece somente como aviso de migração.
+
+## Verificação local
+
+```powershell
+# Suíte padrão: não acessa a internet nem requer Playwright
+uv run pytest
+
+# Cobertura do pacote que receberá as camadas modernizadas
+uv run pytest --cov=mcp_cnes --cov-report=term-missing
+
+# Qualidade estática
+uv run ruff check src tests
+uv run pyright
+
+# Servidor MCP oficial via stdio
+uv run mcp-cnes
+
+# Validação interativa com MCP Inspector
+uv run mcp dev src/mcp_cnes/mcp_app.py
+```
+
+Os testes de contrato em `tests/fixtures/contracts/` congelam os nomes, schemas e
+exemplos de resposta das seis ferramentas existentes. Alterações nessas fixtures
+devem ser revisadas como mudanças de contrato.
+
+O snapshot `sdk-tools.snapshot.json` protege os schemas completos por SHA-256 e
+mantém visíveis propriedades de entrada/saída e campos obrigatórios.
+
+## Contrato do SDK MCP
+
+- Os seis nomes históricos permanecem estáveis.
+- Inputs e outputs possuem JSON Schema gerado a partir de type hints/Pydantic.
+- Parâmetros extras são rejeitados e anunciados com
+  `additionalProperties: false`.
+- CNES exige sete dígitos, UF exige duas letras e `limit` aceita `1–500`.
+- Falhas recuperáveis retornam `isError: true`, permitindo autocorreção pelo
+  agente; elas não são retornadas como sucesso.
+- Sucessos incluem `structuredContent` e conteúdo textual JSON para clientes
+  anteriores à saída estruturada.
+- O SDK negocia a revisão atual `2026-07-28` e o modo legado suportado.
+
+Essas são correções intencionais em relação ao envelope legado. O fallback
+`mcp_server.py` fica disponível apenas durante a janela de depreciação até F6.
+
+O teste `tests/unit/test_architecture.py` também funciona como gate de
+dependências: domínio não pode importar MCP, banco, HTTP, Playwright ou pandas;
+aplicação só pode depender do domínio e de suas próprias portas.
+
+## Configuração validada
+
+O bootstrap lê settings somente quando o servidor ou um coletor é criado.
+Configurações inválidas interrompem a inicialização com mensagem explícita, sem
+iniciar rede, browser ou processamento de arquivos. Os principais nomes são:
+
+| Variável | Padrão |
+|---|---|
+| `MCP_CNES_COMPETENCE` | `202512` |
+| `MCP_CNES_MIN_BEDS` / `MCP_CNES_MAX_BEDS` | `50` / `150` |
+| `MCP_CNES_TARGET_CITIES` | objeto JSON com regiões e cidades |
+| `MCP_CNES_PRIVATE_NATURE_CODES` | códigos separados por vírgula |
+| `MCP_CNES_DIRECTOR_CBO_CODES` | códigos separados por vírgula |
+| `MCP_CNES_DATA_DIR` / `MCP_CNES_OUTPUT_DIR` | `downloads` / `.` |
+| `MCP_CNES_BASE_URL`, `MCP_CNES_KIBANA_API`, `MCP_CNES_DASHBOARD_URL` | ElastiCNES |
+| `MCP_CNES_REQUEST_TIMEOUT` / `MCP_CNES_BROWSER_TIMEOUT_MS` | `60` / `60000` |
+
+Delays e retries também podem ser definidos com `MCP_CNES_MIN_DELAY`,
+`MCP_CNES_MAX_DELAY`, `MCP_CNES_MAX_RETRIES` e `MCP_CNES_RETRY_DELAY`.
+
+## Faixa de leitos configurável
+
+As buscas MCP por município e UF aceitam limites inclusivos opcionais definidos
+em cada chamada pelo usuário ou agente:
+
+```json
+{
+  "municipio": "Manaus",
+  "min_leitos": 50,
+  "max_leitos": 150,
+  "limit": 20
+}
+```
+
+- `min_leitos` e `max_leitos` podem ser usados juntos ou isoladamente.
+- Quando ambos são omitidos, a busca MCP mantém o comportamento anterior e não
+  filtra por porte.
+- A resposta diferencia `total_encontrados` de `total_retornados` e informa os
+  limites aplicados em `filtros_leitos`.
+- Valores negativos ou intervalos invertidos retornam erro explícito.
+
+O scraper direto mantém `50–150` como padrão por compatibilidade, mas também
+aceita override por linha de comando:
+
+```powershell
+uv run python cnes_scraper.py --min-beds 20 --max-beds 300
+```
+
+## Dependência opcional de navegador
+
+Playwright pertence ao grupo opcional `browser` e não é instalado por `uv sync`
+nem necessário para a suíte padrão.
+
+```powershell
+uv sync --locked --group browser
+uv run playwright install chromium
+uv run python cnes_playwright_collector.py
+```
+
+## Testes externos
+
+Testes marcados como `live` são separados da suíte padrão e só acessam a internet
+quando a variável de autorização está definida:
+
+```powershell
+$env:CNES_RUN_LIVE_TESTS = "1"
+uv run pytest -m live
+Remove-Item Env:CNES_RUN_LIVE_TESTS
+```
+
+Os scripts históricos `test_api.py`, `test_scraper.py` e `test_mcp_server.py` são
+diagnósticos manuais e não fazem parte da suíte automatizada em `tests/`.
+
+## Uso como servidor MCP
+
+Exemplo de configuração local. Substitua o diretório pelo caminho real do seu
+checkout; nenhum caminho de usuário é codificado na aplicação.
+
+```json
+{
+  "mcpServers": {
+    "cnes": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:/caminho/absoluto/mcp_cnes",
+        "run",
+        "mcp-cnes"
+      ]
+    }
+  }
+}
+```
+
+## Fonte dos dados
+
+Os CSVs são obtidos dos dashboards do Ministério da Saúde:
+
+- Leitos: <https://elasticnes.saude.gov.br/leitos>
+- Geral: <https://elasticnes.saude.gov.br/geral>
+- Profissionais: <https://elasticnes.saude.gov.br/profissionais>
+
+Para download manual, acesse o dashboard de leitos, localize o painel “EXTRATO
+DOS LEITOS”, abra o menu do painel e escolha “Download CSV”. O dashboard informa
+limite de 400.000 registros por download.
+
+## Estrutura atual
+
+```text
+mcp_cnes/
+├── pyproject.toml
+├── uv.lock
+├── src/mcp_cnes/
+│   ├── domain/                # modelos, regras puras e erros
+│   ├── application/           # casos de uso e Protocols
+│   ├── infrastructure/        # settings, CSV e repositório em memória
+│   ├── interfaces/mcp/        # servidor, tools e schemas do SDK oficial
+│   ├── mcp_app.py             # objeto descoberto pelo MCP CLI/Inspector
+│   └── __main__.py            # entrypoint stdio
+├── tests/                     # suíte automatizada e fixtures de contrato
+├── mcp_server.py              # fallback legado até o cutover
+├── cnes_scraper.py            # coletor HTTP experimental
+├── cnes_playwright_collector.py
+├── sample_data.csv
+└── downloads/
+```
+
+Dados do CNES são públicos e disponibilizados pelo Ministério da Saúde/DATASUS.

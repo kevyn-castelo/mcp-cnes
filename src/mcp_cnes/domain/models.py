@@ -1,0 +1,47 @@
+"""Modelos canônicos independentes de transporte e persistência."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any
+
+
+@dataclass
+class HospitalInfo:
+    """Projeção consolidada de um estabelecimento por competência."""
+
+    cnes: str
+    nome_fantasia: str
+    municipio: str
+    uf: str
+    tipo_estabelecimento: str = ""
+    natureza_juridica: str = ""
+    gestao: str = ""
+    convenio_sus: bool = True
+    leitos_existentes: int = 0
+    leitos_sus: int = 0
+    competencia: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Converte o modelo para o contrato legado da interface MCP."""
+
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class LoadSummary:
+    """Contadores de uma importação concluída."""
+
+    records_loaded: int
+    rows_read: int
+    rows_rejected: int
+    rows_ignored: int
+
+
+@dataclass(frozen=True)
+class ImportBatch:
+    """Lote validado que pode substituir atomicamente um repositório."""
+
+    hospitals: tuple[HospitalInfo, ...]
+    summary: LoadSummary
+    source_file: str

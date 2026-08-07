@@ -1,0 +1,3 @@
+CNES,NOME_FANTASIA,MUNICIPIO,UF,LEITOS_EXISTENTES,LEITOS_SUS
+2222222,Hospital Válido,Manaus,AM,80,60
+3333333,Hospital Inválido,Manaus,AM,não-numérico,10

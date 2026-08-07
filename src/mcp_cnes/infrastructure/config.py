@@ -1,0 +1,190 @@
+"""Settings explícitos e validados, sem efeitos colaterais durante import."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from urllib.parse import urlparse
+
+from mcp_cnes.domain.errors import ConfigurationError
+from mcp_cnes.domain.rules import validate_bed_range
+
+DEFAULT_PRIVATE_NATURE_CODES = ("2062", "2240", "2135", "3999", "4000", "2054", "2046")
+DEFAULT_DIRECTOR_CBO_CODES = ("121010", "121005", "131215", "131210")
+DEFAULT_TARGET_CITIES: Mapping[str, tuple[str, ...]] = {
+    "NORTE": ("MANAUS", "PORTO VELHO"),
+    "NORDESTE": ("RECIFE", "FORTALEZA", "CAMPINA GRANDE"),
+    "SUL": (
+        "PORTO ALEGRE",
+        "BENTO GONCALVES",
+        "CAXIAS DO SUL",
+        "PELOTAS",
+        "CANOAS",
+        "CURITIBA",
+        "MARINGA",
+        "LONDRINA",
+        "PINHAIS",
+        "PONTA GROSSA",
+        "CASCAVEL",
+        "FOZ DO IGUACU",
+        "FLORIANOPOLIS",
+        "JOINVILLE",
+        "ITAJAI",
+        "BLUMENAU",
+        "CHAPECO",
+    ),
+    "SUDESTE": (
+        "SAO PAULO",
+        "JUNDIAI",
+        "CAMPINAS",
+        "BARRETOS",
+        "PRESIDENTE PRUDENTE",
+        "SAO JOSE DOS CAMPOS",
+        "RIO DE JANEIRO",
+        "SANTOS",
+        "NITEROI",
+        "SAO GONCALO",
+        "DUQUE DE CAXIAS",
+        "NOVA IGUACU",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class Settings:
+    """Configuração única de runtime para servidor e coletores."""
+
+    competence: str = "202512"
+    min_beds: int = 50
+    max_beds: int = 150
+    target_cities: Mapping[str, tuple[str, ...]] = field(
+        default_factory=lambda: dict(DEFAULT_TARGET_CITIES)
+    )
+    private_nature_codes: tuple[str, ...] = DEFAULT_PRIVATE_NATURE_CODES
+    director_cbo_codes: tuple[str, ...] = DEFAULT_DIRECTOR_CBO_CODES
+    data_dir: Path = Path("downloads")
+    output_dir: Path = Path(".")
+    base_url: str = "https://elasticnes.saude.gov.br"
+    kibana_api: str = "https://elasticnes.saude.gov.br/kibana/api/console/proxy"
+    dashboard_url: str = "https://elasticnes.saude.gov.br/leitos"
+    request_timeout: int = 60
+    browser_timeout_ms: int = 60_000
+    min_delay: float = 2.0
+    max_delay: float = 5.0
+    max_retries: int = 3
+    retry_delay: float = 10.0
+
+    def __post_init__(self) -> None:
+        try:
+            validate_bed_range(self.min_beds, self.max_beds)
+        except ValueError as exc:
+            raise ConfigurationError(f"Faixa de leitos inválida: {exc}") from exc
+        if not re.fullmatch(r"\d{6}", self.competence):
+            raise ConfigurationError("competence deve usar o formato YYYYMM")
+        month = int(self.competence[4:])
+        if not 1 <= month <= 12:
+            raise ConfigurationError("competence contém mês inválido")
+        for name, value in (
+            ("request_timeout", self.request_timeout),
+            ("browser_timeout_ms", self.browser_timeout_ms),
+            ("max_retries", self.max_retries),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ConfigurationError(f"{name} deve ser um inteiro maior que zero")
+        for name, value in (
+            ("min_delay", self.min_delay),
+            ("max_delay", self.max_delay),
+            ("retry_delay", self.retry_delay),
+        ):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                raise ConfigurationError(f"{name} deve ser um número não negativo")
+        if self.min_delay > self.max_delay:
+            raise ConfigurationError("min_delay não pode ser maior que max_delay")
+        for name, value in (
+            ("base_url", self.base_url),
+            ("kibana_api", self.kibana_api),
+            ("dashboard_url", self.dashboard_url),
+        ):
+            parsed = urlparse(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ConfigurationError(f"{name} deve ser uma URL HTTP(S) válida")
+        if not self.private_nature_codes:
+            raise ConfigurationError("private_nature_codes não pode ser vazio")
+        if not self.director_cbo_codes:
+            raise ConfigurationError("director_cbo_codes não pode ser vazio")
+        if not self.target_cities or any(not cities for cities in self.target_cities.values()):
+            raise ConfigurationError("target_cities deve conter regiões com cidades")
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
+        """Constrói settings somente quando o bootstrap solicitar explicitamente."""
+
+        env = os.environ if environ is None else environ
+
+        def integer(name: str, default: int) -> int:
+            raw = env.get(name)
+            if raw is None:
+                return default
+            try:
+                return int(raw)
+            except ValueError as exc:
+                raise ConfigurationError(f"{name} deve ser um inteiro") from exc
+
+        def number(name: str, default: float) -> float:
+            raw = env.get(name)
+            if raw is None:
+                return default
+            try:
+                return float(raw)
+            except ValueError as exc:
+                raise ConfigurationError(f"{name} deve ser um número") from exc
+
+        def codes(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+            raw = env.get(name)
+            return tuple(part.strip() for part in raw.split(",") if part.strip()) if raw else default
+
+        default = cls()
+        cities: Mapping[str, tuple[str, ...]] = default.target_cities
+        if raw_cities := env.get("MCP_CNES_TARGET_CITIES"):
+            try:
+                parsed = json.loads(raw_cities)
+                cities = {str(region): tuple(map(str, values)) for region, values in parsed.items()}
+            except (AttributeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ConfigurationError(
+                    "MCP_CNES_TARGET_CITIES deve ser um objeto JSON de regiões para cidades"
+                ) from exc
+        return cls(
+            competence=env.get("MCP_CNES_COMPETENCE", default.competence),
+            min_beds=integer("MCP_CNES_MIN_BEDS", default.min_beds),
+            max_beds=integer("MCP_CNES_MAX_BEDS", default.max_beds),
+            target_cities=cities,
+            private_nature_codes=codes(
+                "MCP_CNES_PRIVATE_NATURE_CODES", default.private_nature_codes
+            ),
+            director_cbo_codes=codes(
+                "MCP_CNES_DIRECTOR_CBO_CODES", default.director_cbo_codes
+            ),
+            data_dir=Path(env.get("MCP_CNES_DATA_DIR", str(default.data_dir))),
+            output_dir=Path(env.get("MCP_CNES_OUTPUT_DIR", str(default.output_dir))),
+            base_url=env.get("MCP_CNES_BASE_URL", default.base_url),
+            kibana_api=env.get("MCP_CNES_KIBANA_API", default.kibana_api),
+            dashboard_url=env.get("MCP_CNES_DASHBOARD_URL", default.dashboard_url),
+            request_timeout=integer("MCP_CNES_REQUEST_TIMEOUT", default.request_timeout),
+            browser_timeout_ms=integer(
+                "MCP_CNES_BROWSER_TIMEOUT_MS", default.browser_timeout_ms
+            ),
+            min_delay=number("MCP_CNES_MIN_DELAY", default.min_delay),
+            max_delay=number("MCP_CNES_MAX_DELAY", default.max_delay),
+            max_retries=integer("MCP_CNES_MAX_RETRIES", default.max_retries),
+            retry_delay=number("MCP_CNES_RETRY_DELAY", default.retry_delay),
+        )
+
+
+def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
+    """Bootstrap explícito que falha cedo com mensagens de configuração."""
+
+    return Settings.from_env(environ)

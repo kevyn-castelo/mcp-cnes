@@ -1,0 +1,70 @@
+[
+  {
+    "name": "cnes_load_data",
+    "input_properties": ["filepath"],
+    "input_required": ["filepath"],
+    "output_properties": [
+      "success",
+      "registros_carregados",
+      "linhas_lidas",
+      "linhas_rejeitadas",
+      "linhas_ignoradas",
+      "mensagem"
+    ],
+    "sha256": "b5a1703199b469c964396c653ba6bfc270c22a9d52a45e9800cba16b4acfa0de"
+  },
+  {
+    "name": "cnes_search_municipio",
+    "input_properties": ["municipio", "limit", "min_leitos", "max_leitos"],
+    "input_required": ["municipio"],
+    "output_properties": [
+      "municipio",
+      "total_encontrados",
+      "total_retornados",
+      "filtros_leitos",
+      "estabelecimentos"
+    ],
+    "sha256": "2beb73144271c305b58df7b03e886803b569028ebd638c00270eb08c1d89c786"
+  },
+  {
+    "name": "cnes_search_cnes",
+    "input_properties": ["cnes"],
+    "input_required": ["cnes"],
+    "output_properties": ["encontrado", "estabelecimento", "mensagem"],
+    "sha256": "1e7e9c205d67344d14a8637a6a2ff6cb6ec1682bfe7130021d80143c2c0e678b"
+  },
+  {
+    "name": "cnes_search_uf",
+    "input_properties": ["uf", "limit", "min_leitos", "max_leitos"],
+    "input_required": ["uf"],
+    "output_properties": [
+      "uf",
+      "total_encontrados",
+      "total_retornados",
+      "filtros_leitos",
+      "estabelecimentos"
+    ],
+    "sha256": "bf0a298b9581c1e0ce0c7c27ffe39e659c73761fe876d3cb50d7027a7baa7fe5"
+  },
+  {
+    "name": "cnes_statistics",
+    "input_properties": [],
+    "input_required": [],
+    "output_properties": [
+      "total_estabelecimentos",
+      "total_leitos_existentes",
+      "total_leitos_sus",
+      "estabelecimentos_por_uf",
+      "ultima_atualizacao",
+      "arquivo_fonte"
+    ],
+    "sha256": "366e06ffa3081e8012496558d9df188e6ada29cd54047a4cdcfe537c3b36cea9"
+  },
+  {
+    "name": "cnes_download_instructions",
+    "input_properties": [],
+    "input_required": [],
+    "output_properties": ["titulo", "url", "passos", "colunas_disponiveis", "apos_download"],
+    "sha256": "04aedc2945f5d8c20a780b6904da1880bf43f3c09d842d3fb4587e3519e4ac5b"
+  }
+]
