@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from hashlib import sha256
 from typing import Any
 
+from mcp_cnes.domain.identity import canonical_hospital_digest
 from mcp_cnes.domain.models import HospitalInfo, LoadSummary
 from mcp_cnes.domain.rules import is_within_bed_range
 
@@ -32,11 +32,7 @@ class MemoryCNESRepository:
         self.source_file = source_file
         if batch_id is not None:
             return batch_id
-        payload = "\n".join(
-            f"{item.cnes}|{item.competencia}|{item.leitos_existentes}|{item.leitos_sus}"
-            for item in hospitals
-        )
-        return sha256(payload.encode()).hexdigest()
+        return canonical_hospital_digest(hospitals)
 
     def has_data(self) -> bool:
         return bool(self.hospitals)

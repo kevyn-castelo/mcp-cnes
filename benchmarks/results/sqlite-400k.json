@@ -1,10 +1,19 @@
 {
   "rows_requested": 400000,
+  "rows_read": 400000,
+  "rows_loaded": 400000,
   "rows_persisted": 400000,
-  "duration_seconds": 60.919,
-  "peak_python_memory_mib": 0.006,
-  "memory_method": "tracemalloc; excludes native SQLite page cache",
-  "database_size_mib": 131.289,
+  "source_size_mib": 19.018,
+  "duration_seconds": 69.781,
+  "peak_python_memory_mib": 497.059,
+  "memory_method": "tracemalloc around the complete import; excludes CSV generation",
+  "database_size_mib": 202.672,
+  "pipeline": [
+    "SecureCsvImporter",
+    "CsvCNESImporter",
+    "LoadData",
+    "SQLiteCNESRepository"
+  ],
   "environment": {
     "python": "3.14.6",
     "python_implementation": "CPython",

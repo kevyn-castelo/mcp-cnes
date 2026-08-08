@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from mcp import Client
 
 from mcp_cnes.domain.errors import ImportSecurityError
+from mcp_cnes.domain.identity import canonical_hospital_digest
 from mcp_cnes.infrastructure.config import Settings
 from mcp_cnes.infrastructure.importers import CsvCNESImporter, SecureCsvImporter
 from mcp_cnes.interfaces.mcp import create_mcp_server
@@ -28,7 +30,30 @@ def test_accepts_csv_inside_configured_directory(tmp_path: Path) -> None:
     batch = policy(data_dir, allowed=("valid.csv",)).import_file(valid)
 
     assert batch.summary.records_loaded == 1
-    assert batch.source_sha256 is not None
+    assert batch.content_sha256 == canonical_hospital_digest(batch.hospitals)
+
+
+def test_batch_identity_uses_the_content_read_by_the_importer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    valid = data_dir / "valid.csv"
+    write_valid(valid)
+    original_open = Path.open
+    opened = 0
+
+    def tracked_open(path: Path, *args: Any, **kwargs: Any):
+        nonlocal opened
+        opened += 1
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", tracked_open)
+
+    batch = policy(data_dir, allowed=("valid.csv",)).import_file(valid)
+
+    assert opened == 1
+    assert batch.content_sha256 == canonical_hospital_digest(batch.hospitals)
 
 
 @pytest.mark.parametrize("candidate_name", ["invalid.txt", "not-allowed.csv"])

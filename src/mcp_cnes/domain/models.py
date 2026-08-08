@@ -55,4 +55,4 @@ class ImportBatch:
     hospitals: tuple[HospitalInfo, ...]
     summary: LoadSummary
     source_file: str
-    source_sha256: str | None = None
+    content_sha256: str | None = None

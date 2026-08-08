@@ -1,4 +1,4 @@
-"""Benchmark reproduzivel da importacao SQLite sem fixture gigante em disco."""
+"""Benchmark reproduzivel do pipeline real de importacao CSV para SQLite."""
 
 from __future__ import annotations
 
@@ -10,72 +10,82 @@ import sys
 import tempfile
 import time
 import tracemalloc
-from collections.abc import Iterator, Sequence
 from contextlib import closing
 from pathlib import Path
+from typing import Any
 
-from mcp_cnes.domain.models import HospitalInfo, LoadSummary
+from mcp_cnes.application import LoadData
+from mcp_cnes.infrastructure.importers import CsvCNESImporter, SecureCsvImporter
 from mcp_cnes.infrastructure.persistence import SQLiteCNESRepository
 
+PIPELINE = [
+    "SecureCsvImporter",
+    "CsvCNESImporter",
+    "LoadData",
+    "SQLiteCNESRepository",
+]
 
-class VirtualHospitals(Sequence[HospitalInfo]):
-    def __init__(self, size: int) -> None:
-        self.size = size
 
-    def __len__(self) -> int:
-        return self.size
-
-    def __getitem__(self, index: int) -> HospitalInfo:
-        if index < 0:
-            index += self.size
-        if not 0 <= index < self.size:
-            raise IndexError(index)
-        return self._hospital(index)
-
-    def __iter__(self) -> Iterator[HospitalInfo]:
-        return (self._hospital(index) for index in range(self.size))
-
-    @staticmethod
-    def _hospital(index: int) -> HospitalInfo:
-        uf = ("AM", "PA", "SP", "RS")[index % 4]
-        municipality = ("Manaus", "Belém", "São Paulo", "Porto Alegre")[index % 4]
-        return HospitalInfo(
-            cnes=f"{index:07d}",
-            nome_fantasia=f"Hospital {index}",
-            municipio=municipality,
-            uf=uf,
-            leitos_existentes=20 + index % 300,
-            leitos_sus=10 + index % 150,
-            competencia="202607",
+def _write_csv(path: Path, rows: int) -> None:
+    municipalities = ("Manaus", "Belem", "Sao Paulo", "Porto Alegre")
+    ufs = ("AM", "PA", "SP", "RS")
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        stream.write(
+            "CNES,NOME_FANTASIA,MUNICIPIO,UF,LEITOS_EXISTENTES,"
+            "LEITOS_SUS,COMPETENCIA\n"
         )
+        for index in range(rows):
+            group = index % len(ufs)
+            stream.write(
+                f"{index:07d},Hospital {index},{municipalities[group]},{ufs[group]},"
+                f"{20 + index % 300},{10 + index % 150},202607\n"
+            )
 
 
-def run(rows: int) -> dict[str, object]:
+def _database_files_size(database: Path) -> int:
+    return sum(
+        candidate.stat().st_size
+        for candidate in (database, Path(f"{database}-wal"), Path(f"{database}-shm"))
+        if candidate.exists()
+    )
+
+
+def run(rows: int) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="mcp-cnes-benchmark-") as temporary:
-        database = Path(temporary) / "cnes.sqlite3"
+        data_dir = Path(temporary)
+        source = data_dir / "generated.csv"
+        database = data_dir / "cnes.sqlite3"
+        _write_csv(source, rows)
+        source_size = source.stat().st_size
         repository = SQLiteCNESRepository(database)
-        hospitals = VirtualHospitals(rows)
-        summary = LoadSummary(rows, rows, 0, 0)
+        importer = SecureCsvImporter(
+            CsvCNESImporter(),
+            data_dir,
+            max_size_bytes=source_size + 1,
+            allowed_files=(source.name,),
+        )
+        load_data = LoadData(repository, importer)
+
         tracemalloc.start()
         started = time.perf_counter()
-        repository.replace_all(
-            hospitals,
-            "generated.csv",
-            summary=summary,
-            batch_id=f"benchmark-{rows}",
-        )
+        summary = load_data.execute(source)
         duration = time.perf_counter() - started
         _, peak_memory = tracemalloc.get_traced_memory()
         tracemalloc.stop()
+
         with closing(sqlite3.connect(database)) as connection:
             persisted = connection.execute("SELECT COUNT(*) FROM establishments").fetchone()[0]
         return {
             "rows_requested": rows,
+            "rows_read": summary.rows_read,
+            "rows_loaded": summary.records_loaded,
             "rows_persisted": persisted,
+            "source_size_mib": round(source_size / (1024 * 1024), 3),
             "duration_seconds": round(duration, 3),
             "peak_python_memory_mib": round(peak_memory / (1024 * 1024), 3),
-            "memory_method": "tracemalloc; excludes native SQLite page cache",
-            "database_size_mib": round(database.stat().st_size / (1024 * 1024), 3),
+            "memory_method": "tracemalloc around the complete import; excludes CSV generation",
+            "database_size_mib": round(_database_files_size(database) / (1024 * 1024), 3),
+            "pipeline": PIPELINE,
             "environment": {
                 "python": platform.python_version(),
                 "python_implementation": platform.python_implementation(),

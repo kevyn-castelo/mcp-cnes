@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import logging
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from mcp_cnes.domain.errors import CNESDataLoadError, DomainValidationError
+from mcp_cnes.domain.identity import canonical_hospital_digest
 from mcp_cnes.domain.models import (
     HospitalInfo,
     ImportBatch,
@@ -93,12 +93,8 @@ class CsvCNESImporter:
                 for code, count in sorted(rejection_reasons.items())
             ),
         )
-        try:
-            with filepath.open("rb") as source:
-                source_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
-        except OSError as exc:
-            raise CNESDataLoadError("Nao foi possivel calcular a identidade do CSV") from exc
-        return ImportBatch(hospitals, summary, str(filepath), source_sha256)
+        content_sha256 = canonical_hospital_digest(hospitals)
+        return ImportBatch(hospitals, summary, str(filepath), content_sha256)
 
     @staticmethod
     def _to_hospital(

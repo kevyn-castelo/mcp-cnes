@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from collections.abc import Iterable, Iterator, Sequence
@@ -13,10 +12,11 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from mcp_cnes.domain.identity import canonical_hospital_digest
 from mcp_cnes.domain.models import HospitalInfo, LoadSummary
 from mcp_cnes.domain.rules import normalize_search_text
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 MIGRATION_1 = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -78,10 +78,29 @@ CREATE INDEX IF NOT EXISTS idx_establishments_competence
     ON establishments(competencia);
 """
 
+MIGRATION_2 = """
+CREATE VIRTUAL TABLE IF NOT EXISTS establishments_municipality_fts USING fts5(
+    municipio_normalizado,
+    content='establishments',
+    content_rowid='rowid',
+    tokenize='trigram'
+);
+INSERT INTO establishments_municipality_fts(establishments_municipality_fts)
+VALUES('rebuild');
+"""
+
+MIGRATIONS = {1: MIGRATION_1, 2: MIGRATION_2}
+
 HOSPITAL_COLUMNS = """
     cnes, nome_fantasia, municipio, uf, tipo_estabelecimento,
     natureza_juridica, gestao, convenio_sus, leitos_existentes,
     leitos_sus, competencia
+"""
+
+QUALIFIED_HOSPITAL_COLUMNS = """
+    e.cnes, e.nome_fantasia, e.municipio, e.uf, e.tipo_estabelecimento,
+    e.natureza_juridica, e.gestao, e.convenio_sus, e.leitos_existentes,
+    e.leitos_sus, e.competencia
 """
 
 
@@ -118,14 +137,14 @@ class SQLiteCNESRepository:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
             if version > SCHEMA_VERSION:
                 raise RuntimeError("Banco SQLite usa uma versao de schema nao suportada")
-            if version < 1:
-                connection.executescript(MIGRATION_1)
+            for target_version in range(version + 1, SCHEMA_VERSION + 1):
+                connection.executescript(MIGRATIONS[target_version])
                 applied_at = datetime.now(UTC).isoformat()
                 connection.execute(
-                    "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, ?)",
-                    (applied_at,),
+                    "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (target_version, applied_at),
                 )
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                connection.execute(f"PRAGMA user_version = {target_version}")
             self._schema_ready = True
 
     def replace_all(
@@ -138,7 +157,7 @@ class SQLiteCNESRepository:
         batch_id: str | None = None,
     ) -> str:
         effective_summary = summary or LoadSummary(len(hospitals), len(hospitals), 0, 0)
-        effective_batch_id = batch_id or self._canonical_digest(hospitals)
+        effective_batch_id = batch_id or canonical_hospital_digest(hospitals)
         timestamp = (loaded_at or datetime.now(UTC)).astimezone(UTC).isoformat()
         reasons = json.dumps(
             [asdict(reason) for reason in effective_summary.rejection_reasons],
@@ -197,17 +216,6 @@ class SQLiteCNESRepository:
         return effective_batch_id
 
     @staticmethod
-    def _canonical_digest(hospitals: Sequence[HospitalInfo]) -> str:
-        digest = hashlib.sha256()
-        for hospital in hospitals:
-            payload = json.dumps(
-                asdict(hospital), sort_keys=True, ensure_ascii=False, separators=(",", ":")
-            )
-            digest.update(payload.encode())
-            digest.update(b"\n")
-        return digest.hexdigest()
-
-    @staticmethod
     def _staging_rows(
         batch_id: str, hospitals: Sequence[HospitalInfo]
     ) -> Iterable[tuple[Any, ...]]:
@@ -250,6 +258,10 @@ class SQLiteCNESRepository:
             """,
             (batch_id, timestamp, batch_id),
         )
+        connection.execute(
+            "INSERT INTO establishments_municipality_fts"
+            "(establishments_municipality_fts) VALUES('rebuild')"
+        )
 
     def has_data(self) -> bool:
         with self._connection() as connection:
@@ -258,15 +270,15 @@ class SQLiteCNESRepository:
 
     @staticmethod
     def _bed_filters(
-        min_beds: int | None, max_beds: int | None
+        min_beds: int | None, max_beds: int | None, *, prefix: str = ""
     ) -> tuple[list[str], list[int]]:
         clauses: list[str] = []
         parameters: list[int] = []
         if min_beds is not None:
-            clauses.append("leitos_existentes >= ?")
+            clauses.append(f"{prefix}leitos_existentes >= ?")
             parameters.append(min_beds)
         if max_beds is not None:
-            clauses.append("leitos_existentes <= ?")
+            clauses.append(f"{prefix}leitos_existentes <= ?")
             parameters.append(max_beds)
         return clauses, parameters
 
@@ -280,17 +292,29 @@ class SQLiteCNESRepository:
         count: bool = False,
     ) -> tuple[str, list[Any]]:
         normalized = normalize_search_text(municipality)
-        clauses, beds = self._bed_filters(min_beds, max_beds)
-        conditions = ["instr(municipio_normalizado, ?) > 0", *clauses]
-        selection = "COUNT(*)" if count else HOSPITAL_COLUMNS
-        sql = (
-            f"SELECT {selection} FROM establishments "
-            "INDEXED BY idx_establishments_municipality_beds WHERE "
-            + " AND ".join(conditions)
-        )
-        params: list[Any] = [normalized, *beds]
+        if len(normalized) >= 3:
+            clauses, beds = self._bed_filters(min_beds, max_beds, prefix="e.")
+            conditions = ["establishments_municipality_fts MATCH ?", *clauses]
+            selection = "COUNT(*)" if count else QUALIFIED_HOSPITAL_COLUMNS
+            sql = (
+                f"SELECT {selection} FROM establishments_municipality_fts "
+                "JOIN establishments AS e "
+                "ON e.rowid = establishments_municipality_fts.rowid WHERE "
+                + " AND ".join(conditions)
+            )
+            phrase = f'"{normalized.replace(chr(34), chr(34) * 2)}"'
+            params: list[Any] = [phrase, *beds]
+        else:
+            clauses, beds = self._bed_filters(min_beds, max_beds)
+            conditions = ["instr(municipio_normalizado, ?) > 0", *clauses]
+            selection = "COUNT(*)" if count else HOSPITAL_COLUMNS
+            sql = f"SELECT {selection} FROM establishments WHERE " + " AND ".join(
+                conditions
+            )
+            params = [normalized, *beds]
         if not count:
-            sql += " ORDER BY municipio_normalizado, cnes"
+            order_prefix = "e." if len(normalized) >= 3 else ""
+            sql += f" ORDER BY {order_prefix}municipio_normalizado, {order_prefix}cnes"
             if limit is not None:
                 sql += " LIMIT ?"
                 params.append(limit)

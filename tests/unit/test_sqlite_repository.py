@@ -8,6 +8,7 @@ import pytest
 
 from mcp_cnes.domain.models import HospitalInfo, LoadSummary, RejectionReason
 from mcp_cnes.infrastructure.persistence import SQLiteCNESRepository
+from mcp_cnes.infrastructure.persistence.sqlite import MIGRATION_1, SCHEMA_VERSION
 
 
 def hospital(cnes: str, municipality: str = "Manaus", uf: str = "AM", beds: int = 50):
@@ -47,12 +48,17 @@ def test_schema_is_versioned_queries_are_limited_and_indexes_are_used(tmp_path: 
     assert found.municipio == "Belém"
 
     plans = repository.explain_search_plans()
-    assert "idx_establishments_municipality_beds" in " ".join(plans["municipality"])
+    municipality_plan = " ".join(plans["municipality"])
+    assert "VIRTUAL TABLE INDEX" in municipality_plan
+    assert not any(
+        step.startswith(("SCAN e ", "SCAN establishments "))
+        for step in plans["municipality"]
+    )
     assert "idx_establishments_uf_beds" in " ".join(plans["uf"])
     assert "idx_establishments_cnes" in " ".join(plans["cnes"])
 
     with closing(sqlite3.connect(database)) as connection, connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         indexes = {
             row[1] for row in connection.execute("PRAGMA index_list(establishments)")
         }
@@ -62,6 +68,27 @@ def test_schema_is_versioned_queries_are_limited_and_indexes_are_used(tmp_path: 
         "idx_establishments_municipality_beds",
         "idx_establishments_competence",
     }.issubset(indexes)
+
+
+def test_migrates_version_one_database_and_builds_municipality_search_index(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "cnes.sqlite3"
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.executescript(MIGRATION_1)
+        connection.execute("PRAGMA user_version = 1")
+
+    repository = SQLiteCNESRepository(database)
+    repository.replace_all([hospital("0000001")], "fixture.csv", batch_id="migrated")
+
+    assert repository.count_by_municipality("Mana", None, None) == 1
+    with closing(sqlite3.connect(database)) as connection, connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        table = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'establishments_municipality_fts'"
+        ).fetchone()
+    assert table is not None
+    assert "tokenize='trigram'" in table[0]
 
 
 def test_reimporting_same_batch_is_idempotent(tmp_path: Path) -> None:

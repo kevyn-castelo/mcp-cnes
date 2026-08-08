@@ -21,6 +21,6 @@ class LoadData:
             batch.hospitals,
             batch.source_file,
             summary=batch.summary,
-            batch_id=batch.source_sha256,
+            batch_id=batch.content_sha256,
         )
         return replace(batch.summary, batch_id=batch_id)
