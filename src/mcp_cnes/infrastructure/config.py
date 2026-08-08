@@ -73,7 +73,8 @@ class Settings:
     batch_retention_count: int = 5
     output_dir: Path = Path(".")
     base_url: str = "https://elasticnes.saude.gov.br"
-    kibana_api: str = "https://elasticnes.saude.gov.br/kibana/api/console/proxy"
+    kibana_api: str = "https://elasticnes.saude.gov.br/kibana/internal/bsearch"
+    kibana_index: str = "cnes-leitos*"
     dashboard_url: str = "https://elasticnes.saude.gov.br/leitos"
     request_timeout: int = 60
     browser_timeout_ms: int = 60_000
@@ -120,6 +121,8 @@ class Settings:
                 raise ConfigurationError(f"{name} deve ser uma URL HTTP(S) válida")
         if not self.private_nature_codes:
             raise ConfigurationError("private_nature_codes não pode ser vazio")
+        if not re.fullmatch(r"[A-Za-z0-9_.*,-]+", self.kibana_index):
+            raise ConfigurationError("índice Kibana inválido")
         if not self.director_cbo_codes:
             raise ConfigurationError("director_cbo_codes não pode ser vazio")
         if not self.target_cities or any(not cities for cities in self.target_cities.values()):
@@ -190,6 +193,7 @@ class Settings:
             output_dir=Path(env.get("MCP_CNES_OUTPUT_DIR", str(default.output_dir))),
             base_url=env.get("MCP_CNES_BASE_URL", default.base_url),
             kibana_api=env.get("MCP_CNES_KIBANA_API", default.kibana_api),
+            kibana_index=env.get("MCP_CNES_KIBANA_INDEX", default.kibana_index),
             dashboard_url=env.get("MCP_CNES_DASHBOARD_URL", default.dashboard_url),
             request_timeout=integer("MCP_CNES_REQUEST_TIMEOUT", default.request_timeout),
             browser_timeout_ms=integer(

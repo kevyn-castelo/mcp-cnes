@@ -24,6 +24,7 @@ def test_settings_externalize_runtime_values() -> None:
             "MCP_CNES_OUTPUT_DIR": "output",
             "MCP_CNES_BASE_URL": "https://example.test",
             "MCP_CNES_KIBANA_API": "https://example.test/api",
+            "MCP_CNES_KIBANA_INDEX": "cnes_custom_*",
             "MCP_CNES_DASHBOARD_URL": "https://example.test/dashboard",
             "MCP_CNES_REQUEST_TIMEOUT": "30",
             "MCP_CNES_BROWSER_TIMEOUT_MS": "45000",
@@ -43,6 +44,7 @@ def test_settings_externalize_runtime_values() -> None:
     assert settings.allowed_csv_files == ("valid.csv", "monthly.csv")
     assert settings.batch_retention_count == 3
     assert settings.request_timeout == 30
+    assert settings.kibana_index == "cnes_custom_*"
 
 
 @pytest.mark.parametrize(
@@ -57,6 +59,7 @@ def test_settings_externalize_runtime_values() -> None:
         ({"MCP_CNES_MAX_CSV_SIZE_BYTES": "0"}, "maior que zero"),
         ({"MCP_CNES_BATCH_RETENTION_COUNT": "0"}, "maior que zero"),
         ({"MCP_CNES_BASE_URL": "not-a-url"}, r"URL HTTP\(S\) válida"),
+        ({"MCP_CNES_KIBANA_INDEX": "../secret"}, "índice Kibana inválido"),
     ],
 )
 def test_invalid_settings_fail_with_clear_message(

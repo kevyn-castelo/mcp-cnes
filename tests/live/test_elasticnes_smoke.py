@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 
 import pytest
-import requests
+
+from mcp_cnes.domain.models import HospitalInfo
+from mcp_cnes.infrastructure.collectors import KibanaHttpCollector
+from mcp_cnes.infrastructure.config import Settings
 
 
 @pytest.mark.live
-def test_elasticnes_homepage_is_reachable() -> None:
+def test_elasticnes_kibana_contract_is_reachable() -> None:
     if os.getenv("CNES_RUN_LIVE_TESTS") != "1":
         pytest.skip("Defina CNES_RUN_LIVE_TESTS=1 para autorizar acesso externo")
 
-    response = requests.get("https://elasticnes.saude.gov.br/", timeout=15)
+    collector = KibanaHttpCollector(
+        Settings(request_timeout=15, max_retries=1, retry_delay=0)
+    )
+    result = collector.collect("MANAUS", 0, None)
 
-    assert response.status_code < 500
+    assert isinstance(result, Sequence)
+    assert all(isinstance(item, HospitalInfo) for item in result)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from typing import Any
 
 from .errors import DomainValidationError
@@ -72,3 +73,12 @@ def is_within_bed_range(
 
     validate_bed_range(min_beds, max_beds)
     return (min_beds is None or beds >= min_beds) and (max_beds is None or beds <= max_beds)
+
+
+def matches_nature_code(nature: str, allowed_codes: Sequence[str]) -> bool:
+    """Aplica a mesma regra de prefixo de natureza em qualquer adapter."""
+
+    normalized = nature.strip()
+    return bool(normalized) and any(
+        normalized.startswith(code.strip()) for code in allowed_codes if code.strip()
+    )
