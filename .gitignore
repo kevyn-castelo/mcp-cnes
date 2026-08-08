@@ -6,6 +6,7 @@ __pycache__/
 .mypy_cache/
 .coverage
 coverage.xml
+cutover-smoke*.json
 htmlcov/
 *.db
 *.sqlite

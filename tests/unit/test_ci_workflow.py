@@ -15,6 +15,7 @@ def test_pull_request_and_main_workflow_run_locked_quality_gates() -> None:
     assert "Unit tests" in workflow
     assert "Integration tests" in workflow
     assert "Contract tests" in workflow
+    assert "tests/contract" in workflow
     assert "--cov=mcp_cnes.domain --cov=mcp_cnes.application" in workflow
     assert "--cov-fail-under=80" in workflow
     assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow

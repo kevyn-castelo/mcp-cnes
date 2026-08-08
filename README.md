@@ -1,9 +1,9 @@
 # MCP CNES — Servidor de dados do CNES
 
 Servidor MCP para carregar e consultar dados públicos do Cadastro Nacional de
-Estabelecimentos de Saúde (CNES). O caminho ativo usa o SDK Python MCP v2 oficial
-com transporte `stdio`; `mcp_server.py` permanece temporariamente como fallback
-legado até o cutover.
+Estabelecimentos de Saúde (CNES). O entrypoint padrão usa o SDK Python MCP v2
+oficial com transporte `stdio`. `mcp_server.py` permanece temporariamente apenas
+como baseline de paridade e não deve ser usado como rollback por clientes MCP.
 
 ## Ferramentas disponíveis
 
@@ -52,6 +52,9 @@ uv run mcp-cnes
 
 # Validação interativa com MCP Inspector
 uv run mcp dev src/mcp_cnes/mcp_app.py
+
+# Paridade de cutover entre o fallback e o SDK oficial
+uv run pytest tests/contract/test_cutover_parity.py
 ```
 
 Os testes de contrato em `tests/fixtures/contracts/` congelam os nomes, schemas e
@@ -79,7 +82,8 @@ mantém visíveis propriedades de entrada/saída e campos obrigatórios.
 - O SDK negocia a revisão atual `2026-07-28` e o modo legado suportado.
 
 Essas são correções intencionais em relação ao envelope legado. O fallback
-`mcp_server.py` fica disponível apenas durante a janela de depreciação até F6.
+`mcp_server.py` não é um entrypoint suportado para novos consumidores e será
+retirado após o gate operacional descrito em `docs/cutover.md`.
 
 O teste `tests/unit/test_architecture.py` também funciona como gate de
 dependências: domínio não pode importar MCP, banco, HTTP, Playwright ou pandas;
@@ -211,6 +215,34 @@ checkout; nenhum caminho de usuário é codificado na aplicação.
 }
 ```
 
+## Cutover e rollback
+
+O procedimento operacional completo está em [docs/cutover.md](docs/cutover.md).
+Antes de alterar um cliente real, execute a paridade automatizada e gere um
+manifesto do smoke `stdio` com `uv run mcp-cnes-cutover-smoke --help`. O manifesto
+registra versão, revisão verificada, digest da fonte, protocolo, hashes de schema,
+volume importado e a execução das seis ferramentas sem persistir conteúdo de
+estabelecimentos ou caminhos absolutos. O comando exige banco novo e descartável,
+recusa catálogos preexistentes e nunca sobrescreve um manifesto anterior.
+
+O legado só pode ser removido depois da validação do cliente real, do ensaio de
+rollback para um checkout oficial `last-known-good`, do inventário de consumidores
+e da aprovação explícita do responsável.
+
+## Troubleshooting
+
+- `uv sync --locked` falha: confirme Python 3.11+ e uma versão recente do `uv`;
+  remova apenas a `.venv` local e repita o bootstrap.
+- o cliente não lista as tools: execute `uv run mcp-cnes` no mesmo diretório e
+  confira `command`, `args` e caminhos absolutos na configuração do cliente.
+- a carga rejeita o CSV: confirme que o arquivo está dentro de
+  `MCP_CNES_DATA_DIR`, possui extensão `.csv`, respeita o limite e, quando usada,
+  consta em `MCP_CNES_ALLOWED_CSV_FILES`.
+- o smoke falha em uma busca: use município, UF e CNES que existam no mesmo CSV;
+  uma resposta vazia é tratada como falha de validação, não como sucesso.
+- suspeita de banco corrompido ou bloqueado: não apague o catálogo em uso; gere um
+  banco separado para o smoke e preserve o anterior para rollback e diagnóstico.
+
 ## Fonte dos dados
 
 Os CSVs são obtidos dos dashboards do Ministério da Saúde:
@@ -237,7 +269,8 @@ mcp_cnes/
 │   ├── mcp_app.py             # objeto descoberto pelo MCP CLI/Inspector
 │   └── __main__.py            # entrypoint stdio
 ├── tests/                     # suíte automatizada e fixtures de contrato
-├── mcp_server.py              # fallback legado até o cutover
+├── docs/cutover.md            # runbook, inventário, smoke e rollback
+├── mcp_server.py              # baseline legado de paridade aguardando remoção
 ├── cnes_scraper.py            # coletor HTTP experimental
 ├── cnes_playwright_collector.py
 ├── sample_data.csv

@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 mcp-cnes = "mcp_cnes.__main__:main"
+mcp-cnes-cutover-smoke = "mcp_cnes.cutover:main"
 
 [dependency-groups]
 dev = [

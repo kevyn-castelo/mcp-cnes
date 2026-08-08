@@ -1,0 +1,64 @@
+{
+  "cnes_load_data": {
+    "new_only": ["linhas_aceitas", "lote_id", "motivos_rejeicao"],
+    "changed": [],
+    "expected_official": {
+      "linhas_aceitas": 10,
+      "motivos_rejeicao": {}
+    },
+    "justification": "O SDK oficial acrescenta identidade do lote e observabilidade das linhas sem remover os campos legados."
+  },
+  "cnes_search_municipio": {
+    "new_only": [],
+    "changed": [],
+    "expected_official": {},
+    "justification": "Sem divergencias esperadas apos normalizacao."
+  },
+  "cnes_search_cnes": {
+    "new_only": [],
+    "changed": [],
+    "expected_official": {},
+    "justification": "Sem divergencias esperadas apos normalizacao."
+  },
+  "cnes_search_uf": {
+    "new_only": [],
+    "changed": [],
+    "expected_official": {},
+    "justification": "Sem divergencias esperadas apos normalizacao."
+  },
+  "cnes_statistics": {
+    "new_only": [],
+    "changed": ["ultima_atualizacao"],
+    "expected_official": {},
+    "justification": "Cada adaptador registra seu proprio instante de commit do mesmo lote."
+  },
+  "cnes_download_instructions": {
+    "new_only": [],
+    "changed": ["apos_download", "colunas_disponiveis", "passos"],
+    "expected_official": {
+      "passos": [
+        "1. Acesse a URL do dashboard de leitos",
+        "2. Aguarde o carregamento completo do dashboard",
+        "3. Localize a tabela 'EXTRATO DOS LEITOS'",
+        "4. Abra o menu de três pontos da tabela",
+        "5. Selecione 'Download CSV'",
+        "6. Aguarde o download do arquivo"
+      ],
+      "colunas_disponiveis": [
+        "COMPETÊNCIA",
+        "UF",
+        "MUNICÍPIO",
+        "CNES",
+        "NOME_FANTASIA",
+        "TIPO_ESTABELECIMENTO",
+        "NATUREZA_JURÍDICA",
+        "GESTÃO",
+        "CONVÊNIO_SUS",
+        "LEITOS_EXISTENTES",
+        "LEITOS_SUS"
+      ],
+      "apos_download": "Use cnes_load_data para carregar o CSV baixado."
+    },
+    "justification": "O texto foi reduzido no SDK oficial para remover detalhes de UI instaveis e colunas fora do modelo canonico."
+  }
+}
