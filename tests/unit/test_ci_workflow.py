@@ -1,12 +1,13 @@
 from pathlib import Path
 
 
-def test_pull_request_workflow_runs_locked_quality_gates() -> None:
+def test_pull_request_and_main_workflow_run_locked_quality_gates() -> None:
     workflow = (
         Path(__file__).parents[2] / ".github" / "workflows" / "ci.yml"
     ).read_text(encoding="utf-8")
 
     assert "pull_request:" in workflow
+    assert "push:\n    branches: [main]" in workflow
     assert "permissions:\n  contents: read" in workflow
     assert "uv sync --locked" in workflow
     assert "uv run ruff check src tests mcp_server.py benchmarks" in workflow
