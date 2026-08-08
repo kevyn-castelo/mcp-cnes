@@ -10,6 +10,7 @@ from jsonschema.validators import validator_for
 from mcp import Client
 from mcp.types import LATEST_PROTOCOL_VERSION
 
+from mcp_cnes.infrastructure.config import Settings
 from mcp_cnes.interfaces.mcp import create_mcp_server
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
@@ -64,8 +65,16 @@ async def test_tool_catalog_matches_sdk_snapshot_and_has_valid_schemas() -> None
 
 
 @pytest.mark.asyncio
-async def test_official_client_calls_all_six_tools_with_controlled_fixture() -> None:
-    server = create_mcp_server()
+async def test_official_client_calls_all_six_tools_with_controlled_fixture(
+    tmp_path: Path,
+) -> None:
+    server = create_mcp_server(
+        settings=Settings(
+            data_dir=FIXTURES / "csv",
+            database_path=tmp_path / "cnes.sqlite3",
+            allowed_csv_files=("valid.csv",),
+        )
+    )
     csv_path = FIXTURES / "csv" / "valid.csv"
 
     async with Client(server) as client:
@@ -118,9 +127,17 @@ async def test_invalid_inputs_return_actionable_tool_errors(
 
 
 @pytest.mark.asyncio
-async def test_business_validation_and_missing_file_do_not_leak_internal_paths() -> None:
+async def test_business_validation_and_missing_file_do_not_leak_internal_paths(
+    tmp_path: Path,
+) -> None:
     csv_path = FIXTURES / "csv" / "valid.csv"
-    server = create_mcp_server()
+    server = create_mcp_server(
+        settings=Settings(
+            data_dir=FIXTURES / "csv",
+            database_path=tmp_path / "cnes.sqlite3",
+            allowed_csv_files=("valid.csv",),
+        )
+    )
     async with Client(server) as client:
         missing = await client.call_tool(
             "cnes_load_data", {"filepath": str(Path.cwd() / "private" / "missing.csv")}
@@ -132,7 +149,7 @@ async def test_business_validation_and_missing_file_do_not_leak_internal_paths()
         )
 
     assert missing.is_error is True
-    assert "Arquivo CSV não encontrado" in result_text(missing)
+    assert "politica de importacao" in result_text(missing)
     assert "private" not in result_text(missing)
     assert inverted.is_error is True
     assert "não pode ser maior" in result_text(inverted)

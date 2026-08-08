@@ -21,10 +21,10 @@ from mcp_cnes.application import (
     SearchByUF,
 )
 from mcp_cnes.application.ports import CNESImporter, CNESRepository
-from mcp_cnes.domain.errors import CNESDataLoadError
+from mcp_cnes.domain.errors import CNESDataLoadError, ImportSecurityError
 from mcp_cnes.infrastructure.config import Settings, load_settings
-from mcp_cnes.infrastructure.importers import CsvCNESImporter
-from mcp_cnes.infrastructure.persistence import MemoryCNESRepository
+from mcp_cnes.infrastructure.importers import CsvCNESImporter, SecureCsvImporter
+from mcp_cnes.infrastructure.persistence import SQLiteCNESRepository
 
 from .schemas import (
     BedFiltersOutput,
@@ -135,8 +135,16 @@ def create_mcp_server(
     """Compõe o servidor sem iniciar transporte, rede ou leitura de arquivos."""
 
     runtime_settings = settings or load_settings()
-    runtime_repository = repository or MemoryCNESRepository()
-    runtime_importer = importer or CsvCNESImporter()
+    runtime_repository = repository or SQLiteCNESRepository(
+        runtime_settings.database_path,
+        batch_retention_count=runtime_settings.batch_retention_count,
+    )
+    runtime_importer = importer or SecureCsvImporter(
+        CsvCNESImporter(),
+        runtime_settings.data_dir,
+        runtime_settings.max_csv_size_bytes,
+        runtime_settings.allowed_csv_files,
+    )
 
     load_data = LoadData(runtime_repository, runtime_importer)
     search_municipality = SearchByMunicipality(runtime_repository)
@@ -162,19 +170,27 @@ def create_mcp_server(
     ) -> LoadDataOutput:
         """Carrega e consolida atomicamente um CSV exportado do CNES."""
 
-        path = Path(filepath)
-        if not path.is_file():
-            raise ValueError("Arquivo CSV não encontrado. Verifique filepath e tente novamente.")
         try:
-            summary = load_data.execute(path)
+            summary = load_data.execute(Path(filepath))
+        except ImportSecurityError as exc:
+            raise ValueError(
+                f"{exc}. Verifique filepath e a politica configurada."
+            ) from None
         except CNESDataLoadError as exc:
             raise ValueError(_safe_load_error(exc)) from None
+        if summary.batch_id is None:
+            raise RuntimeError("A persistencia nao retornou a identidade do lote")
         return LoadDataOutput(
             success=True,
+            lote_id=summary.batch_id,
             registros_carregados=summary.records_loaded,
             linhas_lidas=summary.rows_read,
+            linhas_aceitas=summary.records_loaded,
             linhas_rejeitadas=summary.rows_rejected,
             linhas_ignoradas=summary.rows_ignored,
+            motivos_rejeicao={
+                reason.code: reason.count for reason in summary.rejection_reasons
+            },
             mensagem=f"Carregados {summary.records_loaded} estabelecimentos de saúde",
         )
 

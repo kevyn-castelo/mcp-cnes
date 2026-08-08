@@ -35,10 +35,13 @@ class HospitalOutput(ContractModel):
 
 class LoadDataOutput(ContractModel):
     success: bool
+    lote_id: str
     registros_carregados: int = Field(ge=0)
     linhas_lidas: int = Field(ge=0)
+    linhas_aceitas: int = Field(ge=0)
     linhas_rejeitadas: int = Field(ge=0)
     linhas_ignoradas: int = Field(ge=0)
+    motivos_rejeicao: dict[str, int]
     mensagem: str
 
 

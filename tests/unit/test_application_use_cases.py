@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from mcp_cnes.application import (
@@ -18,7 +19,7 @@ def hospital(cnes: str, municipality: str, uf: str, beds: int) -> HospitalInfo:
 
 
 class FakeImporter:
-    def __init__(self, items: tuple[HospitalInfo, ...]) -> None:
+    def __init__(self, items: Sequence[HospitalInfo]) -> None:
         self.items = items
 
     def import_file(self, filepath: Path) -> ImportBatch:
@@ -54,6 +55,45 @@ def test_load_data_executes_with_in_memory_fake() -> None:
     assert repository.source_file == "fixture.csv"
 
 
+def test_load_data_closes_staged_hospitals_after_consumption() -> None:
+    class ClosableHospitals(list[HospitalInfo]):
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    items = ClosableHospitals([hospital("0000001", "Manaus", "AM", 50)])
+
+    LoadData(MemoryCNESRepository(), FakeImporter(items)).execute(Path("fixture.csv"))
+
+    assert items.closed is True
+
+
+class SnapshotOnlyRepository(MemoryCNESRepository):
+    def search_by_municipality(
+        self,
+        municipality: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int | None = None,
+    ) -> list[HospitalInfo]:
+        raise AssertionError("legacy split query must not be called")
+
+    def count_by_municipality(
+        self, municipality: str, min_beds: int | None, max_beds: int | None
+    ) -> int:
+        raise AssertionError("legacy split query must not be called")
+
+    def search_by_municipality_with_count(
+        self,
+        municipality: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int,
+    ) -> tuple[Sequence[HospitalInfo], int]:
+        return ([hospital("0000001", "Manaus", "AM", 50)], 7)
+
+
 def test_search_by_municipality_executes_with_in_memory_fake() -> None:
     result = SearchByMunicipality(populated_repository()).execute(
         "mana", min_beds=50, max_beds=150
@@ -61,6 +101,13 @@ def test_search_by_municipality_executes_with_in_memory_fake() -> None:
 
     assert result.total_available == 1
     assert [item.cnes for item in result.items] == ["0000002"]
+
+
+def test_search_uses_atomic_items_and_count_repository_operation() -> None:
+    result = SearchByMunicipality(SnapshotOnlyRepository()).execute("Manaus", limit=1)
+
+    assert [item.cnes for item in result.items] == ["0000001"]
+    assert result.total_available == 7
 
 
 def test_search_by_cnes_executes_with_in_memory_fake() -> None:

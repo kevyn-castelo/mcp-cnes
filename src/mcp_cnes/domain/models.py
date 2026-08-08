@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -29,6 +30,14 @@ class HospitalInfo:
 
 
 @dataclass(frozen=True)
+class RejectionReason:
+    """Motivo agregado sem reter o conteudo sensivel da linha rejeitada."""
+
+    code: str
+    count: int
+
+
+@dataclass(frozen=True)
 class LoadSummary:
     """Contadores de uma importação concluída."""
 
@@ -36,12 +45,22 @@ class LoadSummary:
     rows_read: int
     rows_rejected: int
     rows_ignored: int
+    batch_id: str | None = None
+    rejection_reasons: tuple[RejectionReason, ...] = ()
 
 
 @dataclass(frozen=True)
 class ImportBatch:
     """Lote validado que pode substituir atomicamente um repositório."""
 
-    hospitals: tuple[HospitalInfo, ...]
+    hospitals: Sequence[HospitalInfo]
     summary: LoadSummary
     source_file: str
+    content_sha256: str | None = None
+
+    def close(self) -> None:
+        """Libera recursos temporarios do adapter, quando presentes."""
+
+        close = getattr(self.hospitals, "close", None)
+        if callable(close):
+            close()

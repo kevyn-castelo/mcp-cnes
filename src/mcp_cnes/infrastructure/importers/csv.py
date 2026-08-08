@@ -1,15 +1,27 @@
-"""Adapter de CSV para o modelo canônico CNES."""
+"""Adapter de CSV para o modelo canonico CNES."""
 
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import logging
+import sqlite3
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from mcp_cnes.domain.errors import CNESDataLoadError, DomainValidationError
-from mcp_cnes.domain.models import HospitalInfo, ImportBatch, LoadSummary
+from mcp_cnes.domain.identity import canonical_hospital_digest
+from mcp_cnes.domain.models import (
+    HospitalInfo,
+    ImportBatch,
+    LoadSummary,
+    RejectionReason,
+)
 from mcp_cnes.domain.rules import normalize_column_name, parse_bool, parse_non_negative_int
+
+from .staging import DiskHospitalSequence
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +43,12 @@ COLUMN_MAP = {
 
 
 class CsvCNESImporter:
-    """Lê, valida, deduplica e consolida um CSV sem alterar persistência."""
+    """Le, valida e consolida CSV usando staging temporario em disco."""
 
     def import_file(self, filepath: Path) -> ImportBatch:
-        staged: dict[tuple[str, str], HospitalInfo] = {}
-        seen_rows: set[tuple[tuple[str, str | None], ...]] = set()
+        staged = DiskHospitalSequence()
         rows_read = rows_rejected = rows_ignored = 0
+        rejection_reasons: Counter[str] = Counter()
 
         try:
             with filepath.open("r", encoding="utf-8-sig", newline="") as file:
@@ -53,28 +65,49 @@ class CsvCNESImporter:
                 for row in reader:
                     rows_read += 1
                     signature = tuple((header, row.get(header)) for header in reader.fieldnames)
-                    if signature in seen_rows:
+                    serialized = json.dumps(
+                        signature, ensure_ascii=False, separators=(",", ":")
+                    ).encode("utf-8")
+                    if not staged.accept_signature(hashlib.sha256(serialized).digest()):
                         rows_ignored += 1
                         continue
-                    seen_rows.add(signature)
                     try:
                         hospital = self._to_hospital(row, headers)
-                    except DomainValidationError as exc:
+                    except DomainValidationError:
                         rows_rejected += 1
-                        logger.warning("Linha %s rejeitada: %s", rows_read, exc)
+                        rejection_reasons["valor_invalido"] += 1
+                        logger.warning("Linha %s rejeitada por valor invalido", rows_read)
                         continue
                     if hospital is None:
                         rows_rejected += 1
+                        rejection_reasons["cnes_ausente"] += 1
                         continue
-                    self._merge(staged, hospital)
-        except CNESDataLoadError:
-            raise
-        except (OSError, UnicodeError, csv.Error) as exc:
-            raise CNESDataLoadError(f"Não foi possível carregar o CSV: {exc}") from exc
+                    staged.merge(hospital, rows_read)
 
-        hospitals = tuple(staged.values())
-        summary = LoadSummary(len(hospitals), rows_read, rows_rejected, rows_ignored)
-        return ImportBatch(hospitals, summary, str(filepath))
+            staged.seal()
+            summary = LoadSummary(
+                len(staged),
+                rows_read,
+                rows_rejected,
+                rows_ignored,
+                rejection_reasons=tuple(
+                    RejectionReason(code, count)
+                    for code, count in sorted(rejection_reasons.items())
+                ),
+            )
+            content_sha256 = canonical_hospital_digest(
+                staged.iter_canonical(), presorted=True
+            )
+            return ImportBatch(staged, summary, str(filepath), content_sha256)
+        except CNESDataLoadError:
+            staged.close()
+            raise
+        except (OSError, UnicodeError, csv.Error, sqlite3.Error) as exc:
+            staged.close()
+            raise CNESDataLoadError(f"Não foi possível carregar o CSV: {exc}") from exc
+        except BaseException:
+            staged.close()
+            raise
 
     @staticmethod
     def _to_hospital(
@@ -103,24 +136,3 @@ class CsvCNESImporter:
             leitos_sus=parse_non_negative_int(data.get("leitos_sus"), "LEITOS_SUS"),
             competencia=str(data.get("competencia", "")),
         )
-
-    @staticmethod
-    def _merge(staged: dict[tuple[str, str], HospitalInfo], hospital: HospitalInfo) -> None:
-        key = (hospital.cnes, hospital.competencia)
-        existing = staged.get(key)
-        if existing is None:
-            staged[key] = hospital
-            return
-        existing.leitos_existentes += hospital.leitos_existentes
-        existing.leitos_sus += hospital.leitos_sus
-        for attribute in (
-            "nome_fantasia",
-            "municipio",
-            "uf",
-            "tipo_estabelecimento",
-            "natureza_juridica",
-            "gestao",
-        ):
-            if not getattr(existing, attribute):
-                setattr(existing, attribute, getattr(hospital, attribute))
-        existing.convenio_sus = existing.convenio_sus or hospital.convenio_sus

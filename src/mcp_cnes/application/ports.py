@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from mcp_cnes.domain.models import HospitalInfo, ImportBatch
+from mcp_cnes.domain.models import HospitalInfo, ImportBatch, LoadSummary
 
 
 class CNESRepository(Protocol):
@@ -18,17 +18,50 @@ class CNESRepository(Protocol):
         hospitals: Sequence[HospitalInfo],
         source_file: str,
         loaded_at: datetime | None = None,
-    ) -> None: ...
+        *,
+        summary: LoadSummary | None = None,
+        batch_id: str | None = None,
+    ) -> str: ...
 
     def has_data(self) -> bool: ...
 
     def search_by_municipality(
-        self, municipality: str, min_beds: int | None, max_beds: int | None
+        self,
+        municipality: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int | None = None,
     ) -> Sequence[HospitalInfo]: ...
 
+    def count_by_municipality(
+        self, municipality: str, min_beds: int | None, max_beds: int | None
+    ) -> int: ...
+
+    def search_by_municipality_with_count(
+        self,
+        municipality: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int,
+    ) -> tuple[Sequence[HospitalInfo], int]: ...
+
     def search_by_uf(
-        self, uf: str, min_beds: int | None, max_beds: int | None
+        self,
+        uf: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int | None = None,
     ) -> Sequence[HospitalInfo]: ...
+
+    def count_by_uf(self, uf: str, min_beds: int | None, max_beds: int | None) -> int: ...
+
+    def search_by_uf_with_count(
+        self,
+        uf: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int,
+    ) -> tuple[Sequence[HospitalInfo], int]: ...
 
     def get_by_cnes(self, cnes: str) -> HospitalInfo | None: ...
 
