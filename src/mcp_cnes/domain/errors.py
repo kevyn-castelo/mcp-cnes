@@ -15,3 +15,22 @@ class ImportSecurityError(CNESDataLoadError):
 
 class ConfigurationError(ValueError):
     """A aplicação não pode iniciar com os settings informados."""
+
+
+class CollectorError(RuntimeError):
+    """Falha previsível de uma dependência externa de coleta."""
+
+    def __init__(
+        self,
+        code: str,
+        stage: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.stage = stage
+        self.retryable = retryable
+        self.status_code = status_code

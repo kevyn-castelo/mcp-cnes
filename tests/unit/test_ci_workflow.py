@@ -12,5 +12,32 @@ def test_pull_request_and_main_workflow_run_locked_quality_gates() -> None:
     assert "uv sync --locked" in workflow
     assert "uv run ruff check src tests mcp_server.py benchmarks" in workflow
     assert "uv run pyright" in workflow
-    assert 'uv run pytest -m "not live"' in workflow
+    assert "Unit tests" in workflow
+    assert "Integration tests" in workflow
+    assert "Contract tests" in workflow
+    assert "--cov=mcp_cnes.domain --cov=mcp_cnes.application" in workflow
+    assert "--cov-fail-under=80" in workflow
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow
     assert "astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b" in workflow
+    assert "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10" in workflow
+    assert "actions/checkout@v6" not in workflow
+
+
+def test_live_smoke_is_manual_and_explicitly_authorized() -> None:
+    workflow = (
+        Path(__file__).parents[2] / ".github" / "workflows" / "live-smoke.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "pull_request:" not in workflow
+    assert 'CNES_RUN_LIVE_TESTS: "1"' in workflow
+    assert "uv run pytest tests/live -m live -q" in workflow
+    assert "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10" in workflow
+    assert "actions/checkout@v6" not in workflow
+
+    live_test = (
+        Path(__file__).parents[1] / "live" / "test_elasticnes_smoke.py"
+    ).read_text(encoding="utf-8")
+    assert "KibanaHttpCollector" in live_test
+    assert ".collect(" in live_test
+    assert "requests.get" not in live_test

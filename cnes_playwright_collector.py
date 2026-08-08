@@ -185,7 +185,7 @@ class CNESPlaywrightCollector:
 
         try:
             # Configura handler de download
-            async with self.context.expect_download() as download_info:
+            async with self.page.expect_download() as download_info:
                 # Clica em "Download CSV"
                 download_button = await frame.query_selector('text="Download CSV"')
                 if not download_button:
@@ -223,12 +223,14 @@ class CNESPlaywrightCollector:
             return None
 
         # 2. Scroll até a tabela
-        await self.scroll_to_table()
+        if not await self.scroll_to_table():
+            logger.error("Falha na etapa locate_panel")
+            return None
 
         # 3. Abrir menu de opções
         if not await self.click_panel_options():
-            logger.warning("Tentando abordagem alternativa...")
-            # Pode tentar métodos alternativos aqui
+            logger.error("Falha na etapa open_panel_options")
+            return None
 
         # 4. Download CSV
         filepath = await self.download_csv()

@@ -104,6 +104,7 @@ iniciar rede, browser ou processamento de arquivos. Os principais nomes são:
 | `MCP_CNES_ALLOWED_CSV_FILES` | vazio (todos os CSVs confinados ao diretório) |
 | `MCP_CNES_BATCH_RETENTION_COUNT` | `5` lotes concluídos |
 | `MCP_CNES_BASE_URL`, `MCP_CNES_KIBANA_API`, `MCP_CNES_DASHBOARD_URL` | ElastiCNES |
+| `MCP_CNES_KIBANA_INDEX` | padrão de índice; default `cnes-leitos*` |
 | `MCP_CNES_REQUEST_TIMEOUT` / `MCP_CNES_BROWSER_TIMEOUT_MS` | `60` / `60000` |
 
 Delays e retries também podem ser definidos com `MCP_CNES_MIN_DELAY`,
@@ -148,6 +149,19 @@ uv run python cnes_scraper.py --min-beds 20 --max-beds 300
 
 ## Dependência opcional de navegador
 
+Os coletores externos implementam a porta `CNESCollector` em
+`mcp_cnes.infrastructure.collectors`:
+
+- `KibanaHttpCollector` recebe uma sessão HTTP injetável, aplica timeout/retry e
+  consulta `internal/bsearch`, distinguindo `http_timeout`, `http_rate_limited`,
+  `http_server_error` e erros de transporte.
+- `PlaywrightCNESCollector` compõe o `PlaywrightCsvDownloader`, que identifica a
+  etapa de falha, captura downloads por `page.expect_download`, usa nomes únicos e
+  remove o CSV temporário após a importação.
+
+Falhas externas usam `CollectorError`, com `code`, `stage`, `retryable` e
+`status_code`, permitindo diferenciá-las de regressões internas sem vazar respostas.
+
 Playwright pertence ao grupo opcional `browser` e não é instalado por `uv sync`
 nem necessário para a suíte padrão.
 
@@ -167,6 +181,11 @@ $env:CNES_RUN_LIVE_TESTS = "1"
 uv run pytest -m live
 Remove-Item Env:CNES_RUN_LIVE_TESTS
 ```
+
+O workflow `Live smoke` também pode ser iniciado manualmente no GitHub Actions.
+Ele executa uma única consulta de contrato via Kibana, possui timeout de cinco minutos
+e nunca é disparado em pull requests. A suíte padrão bloqueia conexões externas;
+coletores HTTP devem usar respostas injetadas nos testes.
 
 Os scripts históricos `test_api.py`, `test_scraper.py` e `test_mcp_server.py` são
 diagnósticos manuais e não fazem parte da suíte automatizada em `tests/`.
