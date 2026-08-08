@@ -135,7 +135,10 @@ def create_mcp_server(
     """Compõe o servidor sem iniciar transporte, rede ou leitura de arquivos."""
 
     runtime_settings = settings or load_settings()
-    runtime_repository = repository or SQLiteCNESRepository(runtime_settings.database_path)
+    runtime_repository = repository or SQLiteCNESRepository(
+        runtime_settings.database_path,
+        batch_retention_count=runtime_settings.batch_retention_count,
+    )
     runtime_importer = importer or SecureCsvImporter(
         CsvCNESImporter(),
         runtime_settings.data_dir,

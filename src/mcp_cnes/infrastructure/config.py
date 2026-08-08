@@ -70,6 +70,7 @@ class Settings:
     database_path: Path = Path("downloads/cnes.sqlite3")
     max_csv_size_bytes: int = 100 * 1024 * 1024
     allowed_csv_files: tuple[str, ...] = ()
+    batch_retention_count: int = 5
     output_dir: Path = Path(".")
     base_url: str = "https://elasticnes.saude.gov.br"
     kibana_api: str = "https://elasticnes.saude.gov.br/kibana/api/console/proxy"
@@ -96,6 +97,7 @@ class Settings:
             ("browser_timeout_ms", self.browser_timeout_ms),
             ("max_retries", self.max_retries),
             ("max_csv_size_bytes", self.max_csv_size_bytes),
+            ("batch_retention_count", self.batch_retention_count),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ConfigurationError(f"{name} deve ser um inteiro maior que zero")
@@ -181,6 +183,9 @@ class Settings:
             ),
             allowed_csv_files=codes(
                 "MCP_CNES_ALLOWED_CSV_FILES", default.allowed_csv_files
+            ),
+            batch_retention_count=integer(
+                "MCP_CNES_BATCH_RETENTION_COUNT", default.batch_retention_count
             ),
             output_dir=Path(env.get("MCP_CNES_OUTPUT_DIR", str(default.output_dir))),
             base_url=env.get("MCP_CNES_BASE_URL", default.base_url),

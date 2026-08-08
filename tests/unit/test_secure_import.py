@@ -10,6 +10,7 @@ from mcp_cnes.domain.errors import ImportSecurityError
 from mcp_cnes.domain.identity import canonical_hospital_digest
 from mcp_cnes.infrastructure.config import Settings
 from mcp_cnes.infrastructure.importers import CsvCNESImporter, SecureCsvImporter
+from mcp_cnes.infrastructure.importers.staging import DiskHospitalSequence
 from mcp_cnes.interfaces.mcp import create_mcp_server
 
 
@@ -31,6 +32,11 @@ def test_accepts_csv_inside_configured_directory(tmp_path: Path) -> None:
 
     assert batch.summary.records_loaded == 1
     assert batch.content_sha256 == canonical_hospital_digest(batch.hospitals)
+    assert isinstance(batch.hospitals, DiskHospitalSequence)
+    staging_path = batch.hospitals.path
+    assert staging_path.exists()
+    batch.close()
+    assert not staging_path.exists()
 
 
 def test_batch_identity_uses_the_content_read_by_the_importer(
@@ -54,6 +60,7 @@ def test_batch_identity_uses_the_content_read_by_the_importer(
 
     assert opened == 1
     assert batch.content_sha256 == canonical_hospital_digest(batch.hospitals)
+    batch.close()
 
 
 @pytest.mark.parametrize("candidate_name", ["invalid.txt", "not-allowed.csv"])

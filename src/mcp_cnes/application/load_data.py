@@ -17,10 +17,13 @@ class LoadData:
 
     def execute(self, filepath: Path) -> LoadSummary:
         batch = self._importer.import_file(filepath)
-        batch_id = self._repository.replace_all(
-            batch.hospitals,
-            batch.source_file,
-            summary=batch.summary,
-            batch_id=batch.content_sha256,
-        )
-        return replace(batch.summary, batch_id=batch_id)
+        try:
+            batch_id = self._repository.replace_all(
+                batch.hospitals,
+                batch.source_file,
+                summary=batch.summary,
+                batch_id=batch.content_sha256,
+            )
+            return replace(batch.summary, batch_id=batch_id)
+        finally:
+            batch.close()

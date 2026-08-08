@@ -20,6 +20,7 @@ def test_settings_externalize_runtime_values() -> None:
             "MCP_CNES_DATABASE_PATH": "data/catalog.sqlite3",
             "MCP_CNES_MAX_CSV_SIZE_BYTES": "2048",
             "MCP_CNES_ALLOWED_CSV_FILES": "valid.csv,monthly.csv",
+            "MCP_CNES_BATCH_RETENTION_COUNT": "3",
             "MCP_CNES_OUTPUT_DIR": "output",
             "MCP_CNES_BASE_URL": "https://example.test",
             "MCP_CNES_KIBANA_API": "https://example.test/api",
@@ -40,6 +41,7 @@ def test_settings_externalize_runtime_values() -> None:
     assert settings.database_path.name == "catalog.sqlite3"
     assert settings.max_csv_size_bytes == 2048
     assert settings.allowed_csv_files == ("valid.csv", "monthly.csv")
+    assert settings.batch_retention_count == 3
     assert settings.request_timeout == 30
 
 
@@ -53,6 +55,7 @@ def test_settings_externalize_runtime_values() -> None:
         ),
         ({"MCP_CNES_REQUEST_TIMEOUT": "rápido"}, "deve ser um inteiro"),
         ({"MCP_CNES_MAX_CSV_SIZE_BYTES": "0"}, "maior que zero"),
+        ({"MCP_CNES_BATCH_RETENTION_COUNT": "0"}, "maior que zero"),
         ({"MCP_CNES_BASE_URL": "not-a-url"}, r"URL HTTP\(S\) válida"),
     ],
 )

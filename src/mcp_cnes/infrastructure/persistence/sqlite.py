@@ -107,8 +107,11 @@ QUALIFIED_HOSPITAL_COLUMNS = """
 class SQLiteCNESRepository:
     """Repositorio lazy: o arquivo so e criado no primeiro uso de runtime."""
 
-    def __init__(self, database_path: Path) -> None:
+    def __init__(self, database_path: Path, *, batch_retention_count: int = 5) -> None:
+        if batch_retention_count < 1:
+            raise ValueError("batch_retention_count deve ser maior que zero")
         self.database_path = database_path
+        self.batch_retention_count = batch_retention_count
         self._schema_lock = Lock()
         self._schema_ready = False
 
@@ -172,8 +175,17 @@ class SQLiteCNESRepository:
                     "SELECT status FROM import_batches WHERE id = ?", (effective_batch_id,)
                 ).fetchone()
                 if existing is not None and existing["status"] == "completed":
-                    connection.commit()
-                    return effective_batch_id
+                    active = connection.execute(
+                        "SELECT EXISTS(SELECT 1 FROM establishments WHERE batch_id = ?)",
+                        (effective_batch_id,),
+                    ).fetchone()[0]
+                    if active:
+                        self._purge_old_batches(connection, effective_batch_id)
+                        connection.commit()
+                        return effective_batch_id
+                    connection.execute(
+                        "DELETE FROM import_batches WHERE id = ?", (effective_batch_id,)
+                    )
 
                 connection.execute(
                     """
@@ -209,11 +221,29 @@ class SQLiteCNESRepository:
                     "UPDATE import_batches SET status = 'completed' WHERE id = ?",
                     (effective_batch_id,),
                 )
+                self._purge_old_batches(connection, effective_batch_id)
                 connection.commit()
             except BaseException:
                 connection.rollback()
                 raise
         return effective_batch_id
+
+    def _purge_old_batches(
+        self, connection: sqlite3.Connection, current_batch_id: str
+    ) -> None:
+        older_to_keep = self.batch_retention_count - 1
+        connection.execute(
+            """
+            DELETE FROM import_batches
+            WHERE id IN (
+                SELECT id FROM import_batches
+                WHERE status = 'completed' AND id <> ?
+                ORDER BY imported_at DESC, id DESC
+                LIMIT -1 OFFSET ?
+            )
+            """,
+            (current_batch_id, older_to_keep),
+        )
 
     @staticmethod
     def _staging_rows(
@@ -290,12 +320,15 @@ class SQLiteCNESRepository:
         limit: int | None,
         *,
         count: bool = False,
+        include_total: bool = False,
     ) -> tuple[str, list[Any]]:
         normalized = normalize_search_text(municipality)
         if len(normalized) >= 3:
             clauses, beds = self._bed_filters(min_beds, max_beds, prefix="e.")
             conditions = ["establishments_municipality_fts MATCH ?", *clauses]
-            selection = "COUNT(*)" if count else QUALIFIED_HOSPITAL_COLUMNS
+            selection = self._query_selection(
+                QUALIFIED_HOSPITAL_COLUMNS, count, include_total
+            )
             sql = (
                 f"SELECT {selection} FROM establishments_municipality_fts "
                 "JOIN establishments AS e "
@@ -307,7 +340,7 @@ class SQLiteCNESRepository:
         else:
             clauses, beds = self._bed_filters(min_beds, max_beds)
             conditions = ["instr(municipio_normalizado, ?) > 0", *clauses]
-            selection = "COUNT(*)" if count else HOSPITAL_COLUMNS
+            selection = self._query_selection(HOSPITAL_COLUMNS, count, include_total)
             sql = f"SELECT {selection} FROM establishments WHERE " + " AND ".join(
                 conditions
             )
@@ -319,6 +352,14 @@ class SQLiteCNESRepository:
                 sql += " LIMIT ?"
                 params.append(limit)
         return sql, params
+
+    @staticmethod
+    def _query_selection(columns: str, count: bool, include_total: bool) -> str:
+        if count:
+            return "COUNT(*)"
+        if include_total:
+            return f"{columns}, COUNT(*) OVER() AS total_available"
+        return columns
 
     def search_by_municipality(
         self,
@@ -338,6 +379,18 @@ class SQLiteCNESRepository:
         )
         return self._scalar_count(sql, params)
 
+    def search_by_municipality_with_count(
+        self,
+        municipality: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int,
+    ) -> tuple[list[HospitalInfo], int]:
+        sql, params = self._municipality_query(
+            municipality, min_beds, max_beds, limit, include_total=True
+        )
+        return self._fetch_hospitals_with_count(sql, params)
+
     def _uf_query(
         self,
         uf: str,
@@ -346,10 +399,11 @@ class SQLiteCNESRepository:
         limit: int | None,
         *,
         count: bool = False,
+        include_total: bool = False,
     ) -> tuple[str, list[Any]]:
         clauses, beds = self._bed_filters(min_beds, max_beds)
         conditions = ["uf = ?", *clauses]
-        selection = "COUNT(*)" if count else HOSPITAL_COLUMNS
+        selection = self._query_selection(HOSPITAL_COLUMNS, count, include_total)
         sql = (
             f"SELECT {selection} FROM establishments "
             "INDEXED BY idx_establishments_uf_beds WHERE " + " AND ".join(conditions)
@@ -376,6 +430,18 @@ class SQLiteCNESRepository:
         sql, params = self._uf_query(uf, min_beds, max_beds, None, count=True)
         return self._scalar_count(sql, params)
 
+    def search_by_uf_with_count(
+        self,
+        uf: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int,
+    ) -> tuple[list[HospitalInfo], int]:
+        sql, params = self._uf_query(
+            uf, min_beds, max_beds, limit, include_total=True
+        )
+        return self._fetch_hospitals_with_count(sql, params)
+
     def get_by_cnes(self, cnes: str) -> HospitalInfo | None:
         sql = (
             f"SELECT {HOSPITAL_COLUMNS} FROM establishments "
@@ -393,6 +459,14 @@ class SQLiteCNESRepository:
     def _scalar_count(self, sql: str, params: Sequence[Any]) -> int:
         with self._connection() as connection:
             return int(connection.execute(sql, params).fetchone()[0])
+
+    def _fetch_hospitals_with_count(
+        self, sql: str, params: Sequence[Any]
+    ) -> tuple[list[HospitalInfo], int]:
+        with self._connection() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        total = int(rows[0]["total_available"]) if rows else 0
+        return [self._to_hospital(row) for row in rows], total
 
     @staticmethod
     def _to_hospital(row: sqlite3.Row) -> HospitalInfo:

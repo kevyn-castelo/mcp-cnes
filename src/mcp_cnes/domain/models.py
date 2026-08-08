@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -52,7 +53,14 @@ class LoadSummary:
 class ImportBatch:
     """Lote validado que pode substituir atomicamente um repositório."""
 
-    hospitals: tuple[HospitalInfo, ...]
+    hospitals: Sequence[HospitalInfo]
     summary: LoadSummary
     source_file: str
     content_sha256: str | None = None
+
+    def close(self) -> None:
+        """Libera recursos temporarios do adapter, quando presentes."""
+
+        close = getattr(self.hospitals, "close", None)
+        if callable(close):
+            close()

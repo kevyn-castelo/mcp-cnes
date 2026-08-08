@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -154,3 +155,66 @@ def test_batch_audit_stores_only_aggregated_rejection_reasons(tmp_path: Path) ->
             "FROM import_batches WHERE id = 'audit'"
         ).fetchone()
     assert row == ("person-name.csv", 1, 1, '[{"code":"valor_invalido","count":1}]')
+
+
+def test_completed_batch_retention_purges_old_audit_and_staging_rows(tmp_path: Path) -> None:
+    database = tmp_path / "cnes.sqlite3"
+    repository = SQLiteCNESRepository(database, batch_retention_count=2)
+    started = datetime(2026, 8, 1, tzinfo=UTC)
+
+    for index in range(3):
+        repository.replace_all(
+            [hospital(f"000000{index + 1}")],
+            f"batch-{index + 1}.csv",
+            loaded_at=started + timedelta(minutes=index),
+            batch_id=f"batch-{index + 1}",
+        )
+
+    with closing(sqlite3.connect(database)) as connection, connection:
+        batches = {
+            row[0] for row in connection.execute("SELECT id FROM import_batches")
+        }
+        staging_batches = {
+            row[0]
+            for row in connection.execute("SELECT DISTINCT batch_id FROM staging_establishments")
+        }
+        active_batch = connection.execute(
+            "SELECT DISTINCT batch_id FROM establishments"
+        ).fetchone()[0]
+    assert batches == {"batch-2", "batch-3"}
+    assert staging_batches == batches
+    assert active_batch == "batch-3"
+
+
+def test_reimporting_retained_inactive_batch_reactivates_its_projection(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteCNESRepository(
+        tmp_path / "cnes.sqlite3", batch_retention_count=2
+    )
+    repository.replace_all([hospital("0000001")], "first.csv", batch_id="first")
+    repository.replace_all([hospital("0000002")], "second.csv", batch_id="second")
+
+    repository.replace_all([hospital("0000001")], "first.csv", batch_id="first")
+
+    assert repository.get_by_cnes("0000001") is not None
+    assert repository.get_by_cnes("0000002") is None
+
+
+def test_search_items_and_total_are_returned_by_one_snapshot_query(tmp_path: Path) -> None:
+    repository = SQLiteCNESRepository(tmp_path / "cnes.sqlite3")
+    repository.replace_all(
+        [hospital("0000001"), hospital("0000002"), hospital("0000003", "Belem", "PA")],
+        "fixture.csv",
+        batch_id="snapshot",
+    )
+
+    municipality_items, municipality_total = repository.search_by_municipality_with_count(
+        "Mana", None, None, 1
+    )
+    uf_items, uf_total = repository.search_by_uf_with_count("AM", None, None, 1)
+
+    assert [item.cnes for item in municipality_items] == ["0000001"]
+    assert municipality_total == 2
+    assert [item.cnes for item in uf_items] == ["0000001"]
+    assert uf_total == 2

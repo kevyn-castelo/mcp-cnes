@@ -58,6 +58,16 @@ class MemoryCNESRepository:
     ) -> int:
         return len(self.search_by_municipality(municipality, min_beds, max_beds))
 
+    def search_by_municipality_with_count(
+        self,
+        municipality: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int,
+    ) -> tuple[list[HospitalInfo], int]:
+        matches = self.search_by_municipality(municipality, min_beds, max_beds)
+        return matches[:limit], len(matches)
+
     def search_by_uf(
         self,
         uf: str,
@@ -76,6 +86,16 @@ class MemoryCNESRepository:
 
     def count_by_uf(self, uf: str, min_beds: int | None, max_beds: int | None) -> int:
         return len(self.search_by_uf(uf, min_beds, max_beds))
+
+    def search_by_uf_with_count(
+        self,
+        uf: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int,
+    ) -> tuple[list[HospitalInfo], int]:
+        matches = self.search_by_uf(uf, min_beds, max_beds)
+        return matches[:limit], len(matches)
 
     def get_by_cnes(self, cnes: str) -> HospitalInfo | None:
         return next((hospital for hospital in self.hospitals if hospital.cnes == cnes), None)

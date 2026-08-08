@@ -85,6 +85,7 @@ def run(rows: int) -> dict[str, Any]:
             "peak_python_memory_mib": round(peak_memory / (1024 * 1024), 3),
             "memory_method": "tracemalloc around the complete import; excludes CSV generation",
             "database_size_mib": round(_database_files_size(database) / (1024 * 1024), 3),
+            "staging_strategy": "temporary SQLite",
             "pipeline": PIPELINE,
             "environment": {
                 "python": platform.python_version(),

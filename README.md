@@ -102,6 +102,7 @@ iniciar rede, browser ou processamento de arquivos. Os principais nomes são:
 | `MCP_CNES_DATABASE_PATH` | `downloads/cnes.sqlite3` |
 | `MCP_CNES_MAX_CSV_SIZE_BYTES` | `104857600` |
 | `MCP_CNES_ALLOWED_CSV_FILES` | vazio (todos os CSVs confinados ao diretório) |
+| `MCP_CNES_BATCH_RETENTION_COUNT` | `5` lotes concluídos |
 | `MCP_CNES_BASE_URL`, `MCP_CNES_KIBANA_API`, `MCP_CNES_DASHBOARD_URL` | ElastiCNES |
 | `MCP_CNES_REQUEST_TIMEOUT` / `MCP_CNES_BROWSER_TIMEOUT_MS` | `60` / `60000` |
 
@@ -112,6 +113,10 @@ A importação aceita somente arquivos `.csv` resolvidos dentro de
 `MCP_CNES_DATA_DIR`. Quando `MCP_CNES_ALLOWED_CSV_FILES` é definido, os nomes
 permitidos devem ser separados por vírgula. Travessia de diretório, escape por
 link simbólico e arquivos acima do limite são rejeitados antes da leitura.
+Durante o parsing, deduplicação e consolidação usam um SQLite temporário em disco,
+removido ao final da carga. O catálogo retém somente a quantidade configurada de
+lotes concluídos; o expurgo do histórico e de seu staging ocorre na mesma transação
+que publica o lote atual.
 
 ## Faixa de leitos configurável
 

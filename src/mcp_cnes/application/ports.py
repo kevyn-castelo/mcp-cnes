@@ -37,6 +37,14 @@ class CNESRepository(Protocol):
         self, municipality: str, min_beds: int | None, max_beds: int | None
     ) -> int: ...
 
+    def search_by_municipality_with_count(
+        self,
+        municipality: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int,
+    ) -> tuple[Sequence[HospitalInfo], int]: ...
+
     def search_by_uf(
         self,
         uf: str,
@@ -46,6 +54,14 @@ class CNESRepository(Protocol):
     ) -> Sequence[HospitalInfo]: ...
 
     def count_by_uf(self, uf: str, min_beds: int | None, max_beds: int | None) -> int: ...
+
+    def search_by_uf_with_count(
+        self,
+        uf: str,
+        min_beds: int | None,
+        max_beds: int | None,
+        limit: int,
+    ) -> tuple[Sequence[HospitalInfo], int]: ...
 
     def get_by_cnes(self, cnes: str) -> HospitalInfo | None: ...
 
