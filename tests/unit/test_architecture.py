@@ -84,11 +84,23 @@ import pkgutil
 import socket
 import subprocess
 
+# Dependencias podem realizar introspeccao interna no primeiro import. O gate
+# abaixo mede somente efeitos iniciados pelos modulos do projeto.
+import mcp
+import pandas
+import pydantic
+import requests
+import tqdm
+
 def forbidden(*args, **kwargs):
     raise AssertionError('efeito colateral detectado durante import')
 
+class ForbiddenPopen(subprocess.Popen):
+    def __init__(self, *args, **kwargs):
+        forbidden(*args, **kwargs)
+
 socket.socket.connect = forbidden
-subprocess.Popen = forbidden
+subprocess.Popen = ForbiddenPopen
 asyncio.run = forbidden
 
 import mcp_cnes
