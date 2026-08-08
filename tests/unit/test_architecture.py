@@ -113,7 +113,7 @@ for name in ('mcp_server', 'cnes_scraper', 'cnes_playwright_collector', 'clean_l
     environment = dict(os.environ)
     environment.update(
         {
-            "PYTHONPATH": f"{project_root};{PACKAGE_ROOT.parent}",
+            "PYTHONPATH": os.pathsep.join((str(project_root), str(PACKAGE_ROOT.parent))),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
     )
