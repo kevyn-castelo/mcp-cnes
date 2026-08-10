@@ -36,9 +36,17 @@ def test_live_smoke_is_manual_and_explicitly_authorized() -> None:
     assert "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10" in workflow
     assert "actions/checkout@v6" not in workflow
 
-    live_test = (
+    elasticnes_test = (
         Path(__file__).parents[1] / "live" / "test_elasticnes_smoke.py"
     ).read_text(encoding="utf-8")
-    assert "KibanaHttpCollector" in live_test
-    assert ".collect(" in live_test
-    assert "requests.get" not in live_test
+    assert "KibanaHttpCollector" in elasticnes_test
+    assert ".collect(" in elasticnes_test
+    assert "requests.get" not in elasticnes_test
+
+    portal_sus_test = (
+        Path(__file__).parents[1] / "live" / "test_portal_sus_smoke.py"
+    ).read_text(encoding="utf-8")
+    assert "PortalSUSRemoteSource" in portal_sus_test
+    assert "ListRemoteResources" in portal_sus_test
+    assert "assert resources" in portal_sus_test
+    assert "requests.get" not in portal_sus_test
