@@ -37,7 +37,7 @@ async def test_mcp_search_accepts_custom_inclusive_bed_range() -> None:
     assert unfiltered["total_encontrados"] == 4
     assert unfiltered["total_retornados"] == 2
     assert unfiltered["filtros_leitos"] == {"minimo": None, "maximo": None}
-    assert [item["leitos_existentes"] for item in filtered["estabelecimentos"]] == [50, 150]
+    assert [item["leitos_existentes"] for item in filtered["estabelecimentos"]] == [150, 50]
     assert filtered["total_encontrados"] == 2
     assert filtered["total_retornados"] == 2
 

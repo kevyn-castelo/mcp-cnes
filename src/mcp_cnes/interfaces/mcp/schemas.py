@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from mcp_cnes.domain.models import HospitalInfo
+from mcp_cnes.domain.models import HospitalInfo, HospitalInfoV2
 
 
 class ContractModel(BaseModel):
@@ -30,6 +30,38 @@ class HospitalOutput(ContractModel):
 
     @classmethod
     def from_domain(cls, hospital: HospitalInfo) -> HospitalOutput:
+        return cls.model_validate(hospital.to_dict())
+
+
+class HospitalV2Output(HospitalOutput):
+    razao_social: str | None = None
+    cnpj: str | None = None
+    cnpj_mantenedora: str | None = None
+    tipo_pessoa: str | None = None
+    nivel_dependencia: str | None = None
+    logradouro: str | None = None
+    numero: str | None = None
+    complemento: str | None = None
+    bairro: str | None = None
+    cep: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    geo_confiavel: bool = False
+    telefone: str | None = None
+    email: str | None = None
+    leitos_uti_adulto: int | None = Field(default=None, ge=0)
+    leitos_uti_pediatrica: int | None = Field(default=None, ge=0)
+    leitos_uti_neonatal: int | None = Field(default=None, ge=0)
+    leitos_cirurgicos: int | None = Field(default=None, ge=0)
+    leitos_clinicos: int | None = Field(default=None, ge=0)
+    leitos_obstetricos: int | None = Field(default=None, ge=0)
+    leitos_complementares: int | None = Field(default=None, ge=0)
+    habilitacoes: list[str] = Field(default_factory=list)
+    total_habilitacoes: int = Field(default=0, ge=0)
+    campos_ausentes: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def from_domain(cls, hospital: HospitalInfoV2) -> HospitalV2Output:
         return cls.model_validate(hospital.to_dict())
 
 
@@ -230,6 +262,100 @@ class AdvancedSearchOutput(ContractModel):
     offset: int = Field(ge=0)
     limit: int = Field(ge=1, le=500)
     estabelecimentos: list[HospitalOutput]
+
+
+class AdvancedSearchV2Output(ContractModel):
+    total_encontrados: int = Field(ge=0)
+    total_retornados: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1, le=500)
+    contrato: str = "v2"
+    estabelecimentos: list[HospitalV2Output]
+
+
+class MaintainerGroupOutput(ContractModel):
+    cnpj_mantenedora: str
+    rede: str | None = None
+    unidades: int = Field(ge=1)
+    leitos_existentes: int = Field(ge=0)
+    leitos_sus: int = Field(ge=0)
+    mix_sus: float | None = Field(default=None, ge=0, le=1)
+    mix_nao_sus: float | None = Field(default=None, ge=0, le=1)
+    distribuicao_uf: dict[str, int]
+    campos_ausentes: list[str]
+    alertas: list[str] = Field(default_factory=list)
+
+
+class MaintainerGroupsOutput(ContractModel):
+    total_retornado: int = Field(ge=0)
+    lote_id: str | None = None
+    redes: list[MaintainerGroupOutput]
+    avisos: list[str]
+
+
+class LeadTriggerOutput(ContractModel):
+    cnes: str
+    nome_fantasia: str
+    tipo_estabelecimento: str
+    leitos_existentes_a: int | None = Field(default=None, ge=0)
+    leitos_existentes_b: int | None = Field(default=None, ge=0)
+    leitos_sus_a: int | None = Field(default=None, ge=0)
+    leitos_sus_b: int | None = Field(default=None, ge=0)
+    delta_leitos: int
+    motivo: str = Field(pattern=r"^(expansao|retracao|entrada|saida)$")
+
+
+class LeadTriggersOutput(ContractModel):
+    competencia_a: str
+    competencia_b: str
+    lote_a: str
+    lote_b: str
+    gatilhos: list[LeadTriggerOutput]
+    avisos: list[str]
+
+
+class LeadScoreWeightsInput(ContractModel):
+    porte: float = Field(ge=0)
+    complexidade: float = Field(ge=0)
+    mix_pagador: float = Field(ge=0)
+    tendencia: float = Field(ge=0)
+
+
+class LeadScoreOutput(ContractModel):
+    cnes: str
+    nome_fantasia: str
+    razao_social: str | None = None
+    cnpj: str | None = None
+    cnpj_mantenedora: str | None = None
+    municipio: str
+    uf: str
+    tipo_estabelecimento: str
+    leitos_existentes: int = Field(ge=0)
+    leitos_sus: int = Field(ge=0)
+    leitos_uti: int | None = Field(default=None, ge=0)
+    total_habilitacoes: int = Field(ge=0)
+    delta_leitos: int | None = None
+    score_porte: float | None = Field(default=None, ge=0, le=100)
+    score_complexidade_uti: float | None = Field(default=None, ge=0, le=100)
+    score_complexidade_habilitacoes: float = Field(ge=0, le=100)
+    score_complexidade: float = Field(ge=0, le=100)
+    score_mix_pagador: float | None = Field(default=None, ge=0, le=100)
+    score_tendencia: float | None = Field(default=None, ge=0, le=100)
+    score_total: float | None = Field(default=None, ge=0, le=100)
+    campos_ausentes: list[str] = Field(default_factory=list)
+
+
+class LeadScoresOutput(ContractModel):
+    competencia_a: str
+    competencia_b: str
+    lote_a: str
+    lote_b: str
+    pesos: LeadScoreWeightsInput
+    total_retornado: int = Field(ge=0)
+    leads: list[LeadScoreOutput]
+    metodologia: list[str]
+    campos_ausentes: list[str]
+    avisos: list[str]
 
 
 class NormalizeOutput(ContractModel):

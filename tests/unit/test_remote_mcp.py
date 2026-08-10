@@ -22,9 +22,18 @@ from mcp_cnes.interfaces.mcp import create_mcp_server
 class FakeRemoteSource:
     name = "portal_sus_hospitais_leitos"
 
-    def __init__(self, output: Path, *, error: CollectorError | None = None) -> None:
+    def __init__(
+        self,
+        output: Path,
+        *,
+        error: CollectorError | None = None,
+        download_cache_hit: bool = False,
+        etag: str | None = None,
+    ) -> None:
         self.output = output
         self.error = error
+        self.download_cache_hit = download_cache_hit
+        self.etag = etag
 
     def list_resources(self) -> tuple[SourceResource, ...]:
         if self.error is not None:
@@ -62,6 +71,8 @@ class FakeRemoteSource:
             derived_fields=("CONVENIO_SUS",),
             from_cache=False,
             resource_id="fixture",
+            etag=self.etag,
+            download_cache_hit=self.download_cache_hit,
         )
 
 
@@ -120,13 +131,35 @@ async def test_remote_tools_are_discoverable_and_fetch_reports_filter_provenance
 
 
 @pytest.mark.asyncio
+async def test_fetch_response_reports_annual_download_cache_hit(tmp_path: Path) -> None:
+    source = FakeRemoteSource(
+        tmp_path / "normalized.csv",
+        download_cache_hit=True,
+        etag='"annual"',
+    )
+    server = create_mcp_server(
+        settings=Settings(database_path=tmp_path / "cnes.sqlite3"),
+        repository=MemoryCNESRepository(),
+        remote_source=source,
+    )
+
+    async with Client(server) as client:
+        fetched = await client.call_tool(
+            "cnes_fetch", {"competencia": "202501", "auto_load": False}
+        )
+
+    assert fetched.structured_content["cache"] is True
+    assert fetched.structured_content["etag"] == '"annual"'
+
+
+@pytest.mark.asyncio
 async def test_remote_failure_returns_structured_actionable_error(tmp_path: Path) -> None:
     source = FakeRemoteSource(
         tmp_path / "unused.csv",
         error=CollectorError(
             "remote_server_error",
             "remote_request",
-            "fonte temporariamente indisponÃ­vel",
+            "fonte temporariamente indisponível",
             retryable=True,
             status_code=503,
         ),
@@ -146,7 +179,7 @@ async def test_remote_failure_returns_structured_actionable_error(tmp_path: Path
     message = result_text(result)
     payload = json.loads(message[message.index("{") :])
     assert payload["erro"] == "remote_server_error"
-    assert payload["causa"] == "fonte temporariamente indisponÃ­vel"
+    assert payload["causa"] == "fonte temporariamente indisponível"
     assert "retry" in payload["sugestao"]
     assert "Traceback" not in result_text(result)
 
