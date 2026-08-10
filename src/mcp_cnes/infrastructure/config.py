@@ -68,6 +68,8 @@ class Settings:
     director_cbo_codes: tuple[str, ...] = DEFAULT_DIRECTOR_CBO_CODES
     data_dir: Path = Path("downloads")
     database_path: Path = Path("downloads/cnes.sqlite3")
+    columnar_database_path: Path = Path("downloads/cnes.duckdb")
+    columnar_dir: Path = Path("downloads/parquet")
     max_csv_size_bytes: int = 100 * 1024 * 1024
     allowed_csv_files: tuple[str, ...] = ()
     batch_retention_count: int = 5
@@ -96,6 +98,9 @@ class Settings:
         "mcp-cnes/0.1 (+https://github.com/kevyn-castelo/mcp-cnes)"
     )
     remote_backoff_base: float = 1.0
+    datasus_ftp_host: str = "ftp.datasus.gov.br"
+    datasus_ftp_directory: str = "/cnes"
+    datasus_max_download_bytes: int = 2 * 1024 * 1024 * 1024
 
     def __post_init__(self) -> None:
         try:
@@ -116,6 +121,7 @@ class Settings:
             ("remote_cache_ttl_seconds", self.remote_cache_ttl_seconds),
             ("remote_max_download_bytes", self.remote_max_download_bytes),
             ("remote_max_concurrency", self.remote_max_concurrency),
+            ("datasus_max_download_bytes", self.datasus_max_download_bytes),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ConfigurationError(f"{name} deve ser um inteiro maior que zero")
@@ -140,6 +146,10 @@ class Settings:
                 raise ConfigurationError(f"{name} deve ser uma URL HTTP(S) válida")
         if not re.fullmatch(r"[A-Za-z0-9.-]+", self.remote_download_host):
             raise ConfigurationError("remote_download_host inválido")
+        if not re.fullmatch(r"[A-Za-z0-9.-]+", self.datasus_ftp_host):
+            raise ConfigurationError("datasus_ftp_host inválido")
+        if not self.datasus_ftp_directory.startswith("/"):
+            raise ConfigurationError("datasus_ftp_directory deve começar com /")
         if not self.remote_download_path_prefix.startswith("/"):
             raise ConfigurationError("remote_download_path_prefix deve começar com /")
         if not self.remote_user_agent.strip():
@@ -185,6 +195,18 @@ class Settings:
         database_path = Path(
             env.get("MCP_CNES_DATABASE_PATH", str(default.database_path))
         )
+        columnar_database_path = Path(
+            env.get(
+                "MCP_CNES_COLUMNAR_DATABASE_PATH",
+                str(database_path.with_suffix(".duckdb")),
+            )
+        )
+        columnar_dir = Path(
+            env.get(
+                "MCP_CNES_COLUMNAR_DIR",
+                str(columnar_database_path.parent / "parquet"),
+            )
+        )
         remote_dir = Path(
             env.get("MCP_CNES_REMOTE_DIR", str(database_path.parent / "remote"))
         )
@@ -216,6 +238,8 @@ class Settings:
             ),
             data_dir=Path(env.get("MCP_CNES_DATA_DIR", str(default.data_dir))),
             database_path=database_path,
+            columnar_database_path=columnar_database_path,
+            columnar_dir=columnar_dir,
             max_csv_size_bytes=integer(
                 "MCP_CNES_MAX_CSV_SIZE_BYTES", default.max_csv_size_bytes
             ),
@@ -267,6 +291,16 @@ class Settings:
             ),
             remote_backoff_base=number(
                 "MCP_CNES_REMOTE_BACKOFF_BASE", default.remote_backoff_base
+            ),
+            datasus_ftp_host=env.get(
+                "MCP_CNES_DATASUS_FTP_HOST", default.datasus_ftp_host
+            ),
+            datasus_ftp_directory=env.get(
+                "MCP_CNES_DATASUS_FTP_DIRECTORY", default.datasus_ftp_directory
+            ),
+            datasus_max_download_bytes=integer(
+                "MCP_CNES_DATASUS_MAX_DOWNLOAD_BYTES",
+                default.datasus_max_download_bytes,
             ),
         )
 

@@ -25,6 +25,7 @@ class LoadData:
         source: str = "arquivo_local",
         competence: str | None = None,
         filters: Mapping[str, Any] | None = None,
+        etag: str | None = None,
     ) -> LoadSummary:
         batch = self._importer.import_file(filepath)
         try:
@@ -51,6 +52,7 @@ class LoadData:
                     source=source,
                     competence=competence,
                     filters=filters or {},
+                    etag=etag,
                 )
             else:
                 batch_id = self._repository.replace_all(
