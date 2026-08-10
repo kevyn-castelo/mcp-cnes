@@ -17,3 +17,7 @@ downloads/
 !.env.example
 lista_leads.csv
 leads_clinicas_hospitais.csv
+
+# Local AI development tooling
+.rtk/
+CLAUDE.md

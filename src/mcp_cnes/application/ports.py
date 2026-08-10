@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from mcp_cnes.domain.models import HospitalInfo, ImportBatch, LoadSummary
-from mcp_cnes.domain.remote import RemoteFetchRequest, RemoteFetchResult, SourceResource
+from mcp_cnes.domain.remote import (
+    RemoteCompetenceResult,
+    RemoteFetchRequest,
+    RemoteFetchResult,
+    SourceResource,
+)
 
 
 class CNESRepository(Protocol):
@@ -145,7 +150,7 @@ class CNESRemoteSource(Protocol):
 
     def list_resources(self) -> Sequence[SourceResource]: ...
 
-    def list_competences(self) -> Sequence[str]: ...
+    def list_competences(self, year: int | None = None) -> RemoteCompetenceResult: ...
 
     def fetch(
         self, request: RemoteFetchRequest, destination: Path | None = None

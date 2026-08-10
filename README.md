@@ -15,7 +15,7 @@ como baseline de paridade e não deve ser usado como rollback por clientes MCP.
 | `cnes_search_uf` | Busca estabelecimentos por UF |
 | `cnes_statistics` | Retorna estatísticas dos dados carregados |
 | `cnes_download_instructions` | Explica como obter o CSV manualmente |
-| `cnes_list_sources` / `cnes_list_competencias` | Descobre a fonte oficial e as competências mensais `YYYYMM` disponíveis |
+| `cnes_list_sources` / `cnes_list_competencias` | Descobre a fonte oficial e as competências `YYYYMM` de um ano por chamada |
 | `cnes_fetch` | Baixa, filtra, normaliza e opcionalmente ativa uma competência |
 | `cnes_normalize` / `cnes_validate_dataset` | Normaliza CSV local e verifica qualidade do lote |
 | `cnes_list_lotes` / `cnes_use_lote` / `cnes_purge` | Gerencia histórico, lote ativo e cache |
@@ -25,7 +25,10 @@ como baseline de paridade e não deve ser usado como rollback por clientes MCP.
 ## Fluxo remoto e fluxo manual
 
 No fluxo recomendado, use `cnes_list_competencias` e depois `cnes_fetch` com uma
-competência `YYYYMM`. A tool descobre o arquivo no catálogo oficial, aplica os
+competência `YYYYMM`. Por padrão, a descoberta consulta somente o ano mais recente;
+informe `ano` para consultar um ano específico. A resposta inclui `ano_consultado`
+e somente competências desse ano, evitando baixar todo o histórico. A tool descobre
+o arquivo no catálogo oficial, aplica os
 filtros localmente, gera um CSV canônico e, por padrão, carrega o resultado como
 lote ativo. A resposta informa a fonte, cache, campos derivados e quais filtros
 foram nativos ou locais.

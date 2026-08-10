@@ -88,7 +88,7 @@ TOOL_ARGUMENTS = {
     "cnes_statistics": frozenset(),
     "cnes_download_instructions": frozenset(),
     "cnes_list_sources": frozenset(),
-    "cnes_list_competencias": frozenset({"fonte"}),
+    "cnes_list_competencias": frozenset({"fonte", "ano"}),
     "cnes_fetch": frozenset(
         {
             "competencia",
@@ -243,7 +243,9 @@ def _safe_load_error(error: CNESDataLoadError) -> str:
 def _raise_remote_error(error: CollectorError) -> None:
     suggestions = {
         "remote_competence_not_found": "Revise a competência e remova filtros muito restritivos.",
-        "remote_competence_unavailable": "Use cnes_list_competencias antes de solicitar a carga.",
+        "remote_competence_unavailable": (
+            "Use cnes_list_sources para ver os anos ou omita ano em cnes_list_competencias."
+        ),
         "remote_server_error": "Tente novamente mais tarde; o retry automático já foi esgotado.",
         "remote_rate_limited": "Aguarde antes de repetir a coleta.",
     }
@@ -510,21 +512,26 @@ def create_mcp_server(
             str | None,
             Field(description="Fonte remota; omita para usar a fonte padrão"),
         ] = None,
+        ano: Annotated[
+            int | None,
+            Field(ge=1, description="Ano publicado a consultar; omita para o mais recente"),
+        ] = None,
     ) -> CompetenceListOutput:
-        """Lista arquivos anuais que contêm competências mensais do CNES."""
+        """Lista competências mensais de um único arquivo anual do CNES."""
 
         if fonte is not None and fonte != runtime_remote_source.name:
             raise ValueError(
                 f"fonte desconhecida: {fonte}. Use cnes_list_sources para descobrir fontes."
             )
         try:
-            competences = list_remote_competences.execute()
+            result = list_remote_competences.execute(ano)
         except CollectorError as exc:
             _raise_remote_error(exc)
         return CompetenceListOutput(
             fonte=runtime_remote_source.name,
-            competencias_disponiveis=list(competences),
-            mais_recente=competences[-1] if competences else None,
+            ano_consultado=result.year,
+            competencias_disponiveis=list(result.competences),
+            mais_recente=result.competences[-1] if result.competences else None,
             granularidade="mensal YYYYMM",
         )
 

@@ -8,7 +8,12 @@ from mcp import Client
 
 from mcp_cnes.domain.errors import CollectorError
 from mcp_cnes.domain.models import HospitalInfo
-from mcp_cnes.domain.remote import RemoteFetchRequest, RemoteFetchResult, SourceResource
+from mcp_cnes.domain.remote import (
+    RemoteCompetenceResult,
+    RemoteFetchRequest,
+    RemoteFetchResult,
+    SourceResource,
+)
 from mcp_cnes.infrastructure.config import Settings
 from mcp_cnes.infrastructure.persistence import MemoryCNESRepository
 from mcp_cnes.interfaces.mcp import create_mcp_server
@@ -35,8 +40,11 @@ class FakeRemoteSource:
             ),
         )
 
-    def list_competences(self) -> tuple[str, ...]:
-        return ("202501",)
+    def list_competences(self, year: int | None = None) -> RemoteCompetenceResult:
+        if self.error is not None:
+            raise self.error
+        selected_year = year if year is not None else 2025
+        return RemoteCompetenceResult(selected_year, (f"{selected_year}01",))
 
     def fetch(
         self, request: RemoteFetchRequest, destination: Path | None = None
@@ -76,7 +84,8 @@ async def test_remote_tools_are_discoverable_and_fetch_reports_filter_provenance
     async with Client(server) as client:
         listed = await client.list_tools(cache_mode="bypass")
         sources = await client.call_tool("cnes_list_sources", {})
-        competences = await client.call_tool("cnes_list_competencias", {})
+        latest_competences = await client.call_tool("cnes_list_competencias", {})
+        competences = await client.call_tool("cnes_list_competencias", {"ano": 2025})
         fetched = await client.call_tool(
             "cnes_fetch",
             {
@@ -93,6 +102,8 @@ async def test_remote_tools_are_discoverable_and_fetch_reports_filter_provenance
         "cnes_fetch",
     }.issubset(names)
     assert sources.structured_content["fontes"][0]["status"] == "disponivel"
+    assert latest_competences.structured_content == competences.structured_content
+    assert competences.structured_content["ano_consultado"] == 2025
     assert competences.structured_content["competencias_disponiveis"] == ["202501"]
     assert fetched.structured_content == {
         "filepath": str(source.output),
@@ -137,6 +148,40 @@ async def test_remote_failure_returns_structured_actionable_error(tmp_path: Path
     assert payload["erro"] == "remote_server_error"
     assert payload["causa"] == "fonte temporariamente indisponÃ­vel"
     assert "retry" in payload["sugestao"]
+    assert "Traceback" not in result_text(result)
+
+
+@pytest.mark.asyncio
+async def test_unavailable_competence_year_returns_structured_actionable_error(
+    tmp_path: Path,
+) -> None:
+    source = FakeRemoteSource(
+        tmp_path / "unused.csv",
+        error=CollectorError(
+            "remote_competence_unavailable",
+            "catalog_select",
+            "A fonte oficial não publicou arquivo CSV para 2024",
+            status_code=404,
+        ),
+    )
+    server = create_mcp_server(
+        settings=Settings(database_path=tmp_path / "cnes.sqlite3"),
+        repository=MemoryCNESRepository(),
+        remote_source=source,
+    )
+
+    async with Client(server) as client:
+        result = await client.call_tool("cnes_list_competencias", {"ano": 2024})
+
+    assert result.is_error is True
+    payload = json.loads(result_text(result))
+    assert payload == {
+        "erro": "remote_competence_unavailable",
+        "causa": "A fonte oficial não publicou arquivo CSV para 2024",
+        "sugestao": (
+            "Use cnes_list_sources para ver os anos ou omita ano em cnes_list_competencias."
+        ),
+    }
     assert "Traceback" not in result_text(result)
 
 

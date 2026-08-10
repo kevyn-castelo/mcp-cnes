@@ -19,7 +19,12 @@ from typing import IO, Any
 from urllib.parse import urlparse
 
 from mcp_cnes.domain.errors import CollectorError
-from mcp_cnes.domain.remote import RemoteFetchRequest, RemoteFetchResult, SourceResource
+from mcp_cnes.domain.remote import (
+    RemoteCompetenceResult,
+    RemoteFetchRequest,
+    RemoteFetchResult,
+    SourceResource,
+)
 from mcp_cnes.domain.rules import (
     is_within_bed_range,
     normalize_column_name,
@@ -59,7 +64,7 @@ class PortalSUSRemoteSource:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._resources: tuple[SourceResource, ...] | None = None
         self._resources_checked_at: datetime | None = None
-        self._competences: tuple[str, ...] | None = None
+        self._competences: dict[str, tuple[str, ...]] = {}
 
     def list_resources(self) -> tuple[SourceResource, ...]:
         now = self._clock()
@@ -92,30 +97,48 @@ class PortalSUSRemoteSource:
             )
         self._resources = resources
         self._resources_checked_at = now
-        self._competences = None
+        self._competences.clear()
         return resources
 
-    def list_competences(self) -> tuple[str, ...]:
+    def list_competences(self, year: int | None = None) -> RemoteCompetenceResult:
         resources = self.list_resources()
-        if self._competences is not None:
-            return self._competences
-        found: set[str] = set()
-        for resource in resources:
-            version = hashlib.sha256(
-                f"{resource.resource_id}\0{resource.last_modified or ''}".encode()
-            ).hexdigest()[:16]
+        selected_year = year if year is not None else max(item.year for item in resources)
+        resource = self._select_resource(resources, selected_year)
+        version = hashlib.sha256(
+            f"{resource.resource_id}\0{resource.last_modified or ''}".encode()
+        ).hexdigest()[:16]
+        memory_key = f"{selected_year}:{version}"
+        cached = self._competences.get(memory_key)
+        if cached is None:
             cache = self.settings.remote_cache_dir / f"competences-{version}.json"
-            cached = self._read_competence_cache(cache)
+            cached = self._read_competence_cache(cache, selected_year)
             if cached is None:
                 downloaded, _ = self._download(resource)
                 try:
-                    cached = self._scan_competences(downloaded)
+                    scanned = self._scan_competences(downloaded)
                 finally:
                     downloaded.unlink(missing_ok=True)
-                self._write_json_atomic(cache, list(cached))
-            found.update(cached)
-        self._competences = tuple(sorted(found))
-        return self._competences
+                cached = tuple(
+                    competence
+                    for competence in scanned
+                    if self._is_competence_for_year(competence, selected_year)
+                )
+                if not cached:
+                    raise CollectorError(
+                        "remote_competence_unavailable",
+                        "remote_normalize",
+                        (
+                            "O recurso oficial não contém competências mensais "
+                            f"para {selected_year}"
+                        ),
+                        status_code=404,
+                    )
+                self._write_json_atomic(
+                    cache,
+                    {"year": selected_year, "competences": list(cached)},
+                )
+            self._competences[memory_key] = cached
+        return RemoteCompetenceResult(year=selected_year, competences=cached)
 
     def fetch(
         self, request: RemoteFetchRequest, destination: Path | None = None
@@ -172,11 +195,17 @@ class PortalSUSRemoteSource:
                 released += size
         self._resources = None
         self._resources_checked_at = None
-        self._competences = None
+        self._competences.clear()
         return removed, released
 
     def _resource_for_year(self, year: int) -> SourceResource:
-        candidates = [item for item in self.list_resources() if item.year == year]
+        return self._select_resource(self.list_resources(), year)
+
+    @staticmethod
+    def _select_resource(
+        resources: tuple[SourceResource, ...], year: int
+    ) -> SourceResource:
+        candidates = [item for item in resources if item.year == year]
         if not candidates:
             raise CollectorError(
                 "remote_competence_unavailable", "catalog_select",
@@ -440,15 +469,45 @@ class PortalSUSRemoteSource:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    @staticmethod
-    def _read_competence_cache(path: Path) -> tuple[str, ...] | None:
+    @classmethod
+    def _read_competence_cache(
+        cls, path: Path, expected_year: int
+    ) -> tuple[str, ...] | None:
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            if isinstance(value, dict):
+                cached_year = value.get("year")
+                if (
+                    isinstance(cached_year, bool)
+                    or not isinstance(cached_year, int)
+                    or cached_year != expected_year
+                ):
+                    return None
+                competences = value.get("competences")
+            else:
+                competences = value
+            if (
+                not isinstance(competences, list)
+                or not competences
+                or not all(isinstance(item, str) for item in competences)
+                or not all(
+                    cls._is_competence_for_year(item, expected_year)
+                    for item in competences
+                )
+            ):
                 return None
-            return tuple(value)
-        except (OSError, json.JSONDecodeError):
+            return tuple(sorted(set(competences)))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return None
+
+    @staticmethod
+    def _is_competence_for_year(value: str, year: int) -> bool:
+        return (
+            len(value) == 6
+            and value.isdigit()
+            and int(value[:4]) == year
+            and 1 <= int(value[4:]) <= 12
+        )
 
     @staticmethod
     def _write_json_atomic(path: Path, payload: Any) -> None:
