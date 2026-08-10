@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import threading
 from collections import deque
 from datetime import UTC, datetime, timedelta
@@ -101,6 +103,18 @@ def settings(tmp_path: Path, **overrides: Any) -> Settings:
     }
     values.update(overrides)
     return Settings(**values)
+
+
+def competence_cache_path(
+    config: Settings,
+    *,
+    resource_id: str = "resource-2025",
+    last_modified: str = "2026-01-02T00:00:00",
+) -> Path:
+    version = hashlib.sha256(
+        f"{resource_id}\0{last_modified}".encode()
+    ).hexdigest()[:16]
+    return config.remote_cache_dir / f"competences-{version}.json"
 
 
 def test_discovers_official_resource_and_normalizes_local_filters(tmp_path: Path) -> None:
@@ -351,6 +365,88 @@ def test_new_source_instance_reuses_versioned_competence_cache(tmp_path: Path) -
 
     assert second.list_competences().competences == ("202501", "202502")
     assert [call["url"] for call in second_session.calls] == [CATALOG_URL]
+
+
+def test_legacy_valid_competence_cache_is_reused_without_download(tmp_path: Path) -> None:
+    config = settings(tmp_path)
+    cache = competence_cache_path(config)
+    cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps(["202501", "202502"]), encoding="utf-8")
+    session = Session([Response(catalog_html())])
+    source = PortalSUSRemoteSource(config, session=session, sleeper=lambda _: None)
+
+    result = source.list_competences(2025)
+
+    assert result.competences == ("202501", "202502")
+    assert [call["url"] for call in session.calls] == [CATALOG_URL]
+
+
+@pytest.mark.parametrize(
+    "cached_payload",
+    [
+        [],
+        ["202401"],
+        {"year": 2024, "competences": ["202401"]},
+        {"year": 2025, "competences": []},
+    ],
+)
+def test_semantically_invalid_competence_cache_is_refreshed_once(
+    tmp_path: Path, cached_payload: object
+) -> None:
+    config = settings(tmp_path)
+    cache = competence_cache_path(config)
+    cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps(cached_payload), encoding="utf-8")
+    session = Session([Response(catalog_html()), Response(annual_csv())])
+    source = PortalSUSRemoteSource(config, session=session, sleeper=lambda _: None)
+
+    result = source.list_competences(2025)
+
+    assert result.competences == ("202501", "202502")
+    assert [call["url"] for call in session.calls] == [CATALOG_URL, RESOURCE_URL]
+    assert json.loads(cache.read_text(encoding="utf-8")) == {
+        "competences": ["202501", "202502"],
+        "year": 2025,
+    }
+
+
+def test_invalid_utf8_competence_cache_is_refreshed_once(tmp_path: Path) -> None:
+    config = settings(tmp_path)
+    cache = competence_cache_path(config)
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"\xff\xfe\x00")
+    session = Session([Response(catalog_html()), Response(annual_csv())])
+    source = PortalSUSRemoteSource(config, session=session, sleeper=lambda _: None)
+
+    result = source.list_competences(2025)
+
+    assert result.competences == ("202501", "202502")
+    assert [call["url"] for call in session.calls] == [CATALOG_URL, RESOURCE_URL]
+    assert json.loads(cache.read_text(encoding="utf-8")) == {
+        "competences": ["202501", "202502"],
+        "year": 2025,
+    }
+
+
+def test_invalid_cache_rescan_without_selected_year_returns_actionable_error(
+    tmp_path: Path,
+) -> None:
+    config = settings(tmp_path)
+    cache = competence_cache_path(config)
+    cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps(["202401"]), encoding="utf-8")
+    session = Session(
+        [Response(catalog_html()), Response(annual_csv().replace(b"2025", b"2024"))]
+    )
+    source = PortalSUSRemoteSource(config, session=session, sleeper=lambda _: None)
+
+    with pytest.raises(CollectorError) as captured:
+        source.list_competences(2025)
+
+    assert captured.value.code == "remote_competence_unavailable"
+    assert "2025" in str(captured.value)
+    assert [call["url"] for call in session.calls] == [CATALOG_URL, RESOURCE_URL]
+    assert json.loads(cache.read_text(encoding="utf-8")) == ["202401"]
 
 
 @pytest.mark.parametrize("changed_field", ["resource_id", "last_modified"])

@@ -111,19 +111,32 @@ class PortalSUSRemoteSource:
         cached = self._competences.get(memory_key)
         if cached is None:
             cache = self.settings.remote_cache_dir / f"competences-{version}.json"
-            cached = self._read_competence_cache(cache)
+            cached = self._read_competence_cache(cache, selected_year)
             if cached is None:
                 downloaded, _ = self._download(resource)
                 try:
-                    cached = self._scan_competences(downloaded)
+                    scanned = self._scan_competences(downloaded)
                 finally:
                     downloaded.unlink(missing_ok=True)
-                self._write_json_atomic(cache, list(cached))
-            cached = tuple(
-                competence
-                for competence in cached
-                if self._is_competence_for_year(competence, selected_year)
-            )
+                cached = tuple(
+                    competence
+                    for competence in scanned
+                    if self._is_competence_for_year(competence, selected_year)
+                )
+                if not cached:
+                    raise CollectorError(
+                        "remote_competence_unavailable",
+                        "remote_normalize",
+                        (
+                            "O recurso oficial não contém competências mensais "
+                            f"para {selected_year}"
+                        ),
+                        status_code=404,
+                    )
+                self._write_json_atomic(
+                    cache,
+                    {"year": selected_year, "competences": list(cached)},
+                )
             self._competences[memory_key] = cached
         return RemoteCompetenceResult(year=selected_year, competences=cached)
 
@@ -456,14 +469,35 @@ class PortalSUSRemoteSource:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    @staticmethod
-    def _read_competence_cache(path: Path) -> tuple[str, ...] | None:
+    @classmethod
+    def _read_competence_cache(
+        cls, path: Path, expected_year: int
+    ) -> tuple[str, ...] | None:
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            if isinstance(value, dict):
+                cached_year = value.get("year")
+                if (
+                    isinstance(cached_year, bool)
+                    or not isinstance(cached_year, int)
+                    or cached_year != expected_year
+                ):
+                    return None
+                competences = value.get("competences")
+            else:
+                competences = value
+            if (
+                not isinstance(competences, list)
+                or not competences
+                or not all(isinstance(item, str) for item in competences)
+                or not all(
+                    cls._is_competence_for_year(item, expected_year)
+                    for item in competences
+                )
+            ):
                 return None
-            return tuple(value)
-        except (OSError, json.JSONDecodeError):
+            return tuple(sorted(set(competences)))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return None
 
     @staticmethod
