@@ -6,10 +6,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from mcp_cnes.domain.models import HospitalInfo
+from mcp_cnes.domain.models import HospitalInfo, HospitalInfoV2
 from mcp_cnes.domain.rules import validate_bed_range
 
-from .ports import CNESCatalogRepository
+from .ports import CNESCatalogRepository, CNESColumnarRepository
 from .remote import validate_competence
 
 
@@ -121,6 +121,37 @@ class AdvancedSearch:
         return AdvancedSearchResult(tuple(items), total, offset, limit)
 
 
+@dataclass(frozen=True)
+class AdvancedSearchV2Result:
+    items: tuple[HospitalInfoV2, ...]
+    total_available: int
+    offset: int
+    limit: int
+
+
+class AdvancedSearchV2:
+    def __init__(self, repository: CNESColumnarRepository) -> None:
+        self._repository = repository
+
+    def execute(
+        self,
+        filters: Mapping[str, Any],
+        order_by: str = "cnes",
+        offset: int = 0,
+        limit: int = 100,
+        batch_id: str | None = None,
+    ) -> AdvancedSearchV2Result:
+        _validate_filters(filters)
+        if isinstance(offset, bool) or offset < 0:
+            raise ValueError("offset deve ser um inteiro não negativo")
+        if isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("limit deve estar entre 1 e 500")
+        items, total = self._repository.advanced_search_v2(
+            filters, order_by, offset, limit, batch_id
+        )
+        return AdvancedSearchV2Result(tuple(items), total, offset, limit)
+
+
 def _validate_filters(filters: Mapping[str, Any]) -> None:
     allowed = {
         "uf",
@@ -131,6 +162,7 @@ def _validate_filters(filters: Mapping[str, Any]) -> None:
         "convenio_sus",
         "min_leitos",
         "max_leitos",
+        "cnes_list",
     }
     extras = set(filters) - allowed
     if extras:
@@ -142,3 +174,13 @@ def _validate_filters(filters: Mapping[str, Any]) -> None:
     if convenio is not None and not isinstance(convenio, bool):
         raise ValueError("convenio_sus deve ser booleano")
     validate_bed_range(filters.get("min_leitos"), filters.get("max_leitos"))
+    cnes_list = filters.get("cnes_list")
+    if cnes_list is not None and (
+        not isinstance(cnes_list, (list, tuple))
+        or not 1 <= len(cnes_list) <= 500
+        or any(
+            not isinstance(value, str) or len(value) != 7 or not value.isdigit()
+            for value in cnes_list
+        )
+    ):
+        raise ValueError("cnes_list deve conter de 1 a 500 códigos CNES válidos")

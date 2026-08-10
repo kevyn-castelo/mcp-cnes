@@ -113,7 +113,7 @@ def test_recovers_partially_applied_version_three_migration(tmp_path: Path) -> N
             "SELECT COUNT(*) FROM schema_migrations WHERE version = 3"
         ).fetchone()[0]
     assert {"source", "competence", "filters_json"}.issubset(columns)
-    assert version == 3
+    assert version == SCHEMA_VERSION
     assert migrations == 1
 
 

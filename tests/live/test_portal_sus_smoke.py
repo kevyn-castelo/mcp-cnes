@@ -51,9 +51,11 @@ def test_latest_portal_sus_resource_contains_monthly_competences(tmp_path: Path)
     downloaded_resources: list[SourceResource] = []
 
     class CountingPortalSUSRemoteSource(PortalSUSRemoteSource):
-        def _download(self, resource: SourceResource) -> tuple[Path, str | None]:
+        def _download(
+            self, resource: SourceResource, *, if_none_match: str | None = None
+        ) -> tuple[Path, str | None, bool]:
             downloaded_resources.append(resource)
-            return super()._download(resource)
+            return super()._download(resource, if_none_match=if_none_match)
 
     settings = Settings(
         request_timeout=30,

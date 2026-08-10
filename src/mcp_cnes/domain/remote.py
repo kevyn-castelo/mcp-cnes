@@ -35,6 +35,9 @@ class RemoteFetchRequest:
     uf: str | None = None
     municipality: str | None = None
     establishment_type: str | None = None
+    legal_nature: str | None = None
+    management: str | None = None
+    sus_agreement: bool | None = None
     min_beds: int | None = None
     max_beds: int | None = None
 
@@ -54,6 +57,9 @@ class RemoteFetchResult:
     from_cache: bool
     resource_id: str
     etag: str | None = None
+    download_cache_hit: bool = False
+    contract_version: str = "v1"
+    resource_version: str | None = None
 
 
 @dataclass(frozen=True)

@@ -93,6 +93,19 @@ class SnapshotOnlyRepository(MemoryCNESRepository):
     ) -> tuple[Sequence[HospitalInfo], int]:
         return ([hospital("0000001", "Manaus", "AM", 50)], 7)
 
+    def advanced_search(
+        self,
+        filters,
+        order_by: str,
+        offset: int,
+        limit: int,
+        batch_id: str | None = None,
+    ):
+        assert filters["municipio"] == "Manaus"
+        assert order_by == "leitos_existentes"
+        assert (offset, limit, batch_id) == (0, 1, None)
+        return ([hospital("0000001", "Manaus", "AM", 50)], 7)
+
 
 def test_search_by_municipality_executes_with_in_memory_fake() -> None:
     result = SearchByMunicipality(populated_repository()).execute(

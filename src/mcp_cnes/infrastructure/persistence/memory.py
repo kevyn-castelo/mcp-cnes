@@ -41,6 +41,7 @@ class MemoryCNESRepository:
             "fonte": "arquivo_local",
             "competencia": None,
             "filtros": {},
+            "etag": None,
             "registros": len(hospitals),
             "importado_em": self.last_updated.astimezone(UTC).isoformat(),
         }
@@ -57,16 +58,20 @@ class MemoryCNESRepository:
         source: str,
         competence: str | None,
         filters: Mapping[str, Any],
+        etag: str | None = None,
     ) -> str:
         effective_id = self.replace_all(
             hospitals, source_file, summary=summary, batch_id=batch_id
         )
-        self.update_batch_metadata(effective_id, source, competence, filters)
+        self.update_batch_metadata(effective_id, source, competence, filters, etag)
         return effective_id
 
     def list_batches(self) -> list[dict[str, Any]]:
         return [
-            {**metadata, "ativo": batch_id == self.active_batch_id}
+            {
+                **{key: value for key, value in metadata.items() if key != "etag"},
+                "ativo": batch_id == self.active_batch_id,
+            }
             for batch_id, metadata in reversed(self.batch_metadata.items())
         ]
 
@@ -76,12 +81,28 @@ class MemoryCNESRepository:
         source: str,
         competence: str | None,
         filters: Mapping[str, Any],
+        etag: str | None = None,
     ) -> None:
         if batch_id not in self.batch_metadata:
             raise ValueError(f"Lote inexistente: {batch_id}")
         self.batch_metadata[batch_id].update(
-            fonte=source, competencia=competence, filtros=dict(filters)
+            fonte=source, competencia=competence, filtros=dict(filters), etag=etag
         )
+
+    def get_batch_metadata(self, batch_id: str | None = None) -> dict[str, Any]:
+        selected, hospitals = self._selected(batch_id)
+        metadata = self.batch_metadata[selected]
+        competences = sorted({item.competencia for item in hospitals if item.competencia})
+        return {
+            "lote_id": selected,
+            "fonte": metadata["fonte"],
+            "competencia": metadata["competencia"] or (
+                competences[0] if len(competences) == 1 else competences or None
+            ),
+            "filtros": dict(metadata["filtros"]),
+            "etag": metadata.get("etag"),
+            "importado_em": metadata["importado_em"],
+        }
 
     def activate_batch(self, batch_id: str) -> None:
         if batch_id not in self.batches:
@@ -166,7 +187,10 @@ class MemoryCNESRepository:
         limit: int,
         batch_id: str | None = None,
     ) -> tuple[list[HospitalInfo], int]:
-        _, hospitals = self._selected(batch_id)
+        if batch_id is None and self.active_batch_id is None:
+            hospitals = list(self.hospitals)
+        else:
+            _, hospitals = self._selected(batch_id)
         items = self._filter(hospitals, filters)
         reverse = order_by in {"leitos_existentes", "leitos_sus"}
         items.sort(key=lambda item: getattr(item, order_by), reverse=reverse)
@@ -215,6 +239,8 @@ class MemoryCNESRepository:
     def _filter(hospitals: Sequence[HospitalInfo], filters: Mapping[str, Any]) -> list[HospitalInfo]:
         result = []
         for item in hospitals:
+            if filters.get("cnes_list") and item.cnes not in filters["cnes_list"]:
+                continue
             if filters.get("uf") and item.uf.upper() != str(filters["uf"]).upper():
                 continue
             if filters.get("municipio") and normalize_search_text(str(filters["municipio"])) not in normalize_search_text(item.municipio):

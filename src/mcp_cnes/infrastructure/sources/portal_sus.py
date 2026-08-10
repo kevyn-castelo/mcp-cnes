@@ -9,6 +9,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import time
 import zipfile
 from collections.abc import Callable, Iterator
@@ -65,6 +66,7 @@ class PortalSUSRemoteSource:
         self._resources: tuple[SourceResource, ...] | None = None
         self._resources_checked_at: datetime | None = None
         self._competences: dict[str, tuple[str, ...]] = {}
+        self._artifact_lock = threading.Lock()
 
     def list_resources(self) -> tuple[SourceResource, ...]:
         now = self._clock()
@@ -113,7 +115,7 @@ class PortalSUSRemoteSource:
             cache = self.settings.remote_cache_dir / f"competences-{version}.json"
             cached = self._read_competence_cache(cache, selected_year)
             if cached is None:
-                downloaded, _ = self._download(resource)
+                downloaded, _, _ = self._download(resource)
                 try:
                     scanned = self._scan_competences(downloaded)
                 finally:
@@ -152,11 +154,8 @@ class PortalSUSRemoteSource:
         cached = self._read_cache(metadata, output, int(request.competence[:4]))
         if cached is not None:
             return cached
-        downloaded, etag = self._download(resource)
-        try:
-            records = self._normalize(downloaded, request, output)
-        finally:
-            downloaded.unlink(missing_ok=True)
+        downloaded, etag, download_cache_hit = self._annual_artifact(resource)
+        records = self._normalize(downloaded, request, output)
         result = RemoteFetchResult(
             filepath=output,
             source=self.name,
@@ -169,6 +168,7 @@ class PortalSUSRemoteSource:
             from_cache=False,
             resource_id=resource.resource_id,
             etag=etag,
+            download_cache_hit=download_cache_hit,
         )
         self._write_cache(metadata, result)
         return result
@@ -250,7 +250,9 @@ class PortalSUSRemoteSource:
             resources[year, resource.resource_id] = resource
         return tuple(sorted(resources.values(), key=lambda item: (item.year, item.name)))
 
-    def _download(self, resource: SourceResource) -> tuple[Path, str | None]:
+    def _download(
+        self, resource: SourceResource, *, if_none_match: str | None = None
+    ) -> tuple[Path, str | None, bool]:
         if not self._is_allowed_download(resource.url):
             raise CollectorError(
                 "remote_url_not_allowed", "remote_security",
@@ -267,22 +269,75 @@ class PortalSUSRemoteSource:
                 resource.url,
                 temporary,
                 validate_url=self._is_allowed_download,
+                if_none_match=if_none_match,
             )
             if not self._is_allowed_download(result.final_url):
                 raise CollectorError(
                     "remote_redirect_not_allowed", "remote_security",
                     "O download oficial redirecionou para um domínio não permitido",
                 )
-            etag = result.headers.get("ETag")
+            etag = result.headers.get("ETag") or if_none_match
             if etag is not None and (len(etag) > 512 or any(char in etag for char in "\r\n")):
                 raise CollectorError(
                     "remote_etag_invalid", "remote_security",
                     "A fonte oficial retornou um ETag inválido",
                 )
-            return temporary, etag
+            return temporary, etag, result.not_modified
         except BaseException:
             temporary.unlink(missing_ok=True)
             raise
+
+    def _annual_artifact(
+        self, resource: SourceResource
+    ) -> tuple[Path, str | None, bool]:
+        """Reaproveita o arquivo anual e revalida anos abertos por ETag."""
+
+        with self._artifact_lock:
+            return self._annual_artifact_locked(resource)
+
+    def _annual_artifact_locked(
+        self, resource: SourceResource
+    ) -> tuple[Path, str | None, bool]:
+        """Executa leitura/atualização do artefato sob exclusão mútua."""
+
+        cache_key = hashlib.sha256(
+            f"{self.name}\0{resource.year}".encode()
+        ).hexdigest()[:20]
+        artifact = self.settings.remote_cache_dir / f"annual-{cache_key}.data"
+        metadata = self.settings.remote_cache_dir / f"annual-{cache_key}.json"
+        cached = self._read_annual_cache(metadata, artifact, resource)
+        if cached is not None:
+            cached_etag, fetched_at = cached
+            is_closed_year = resource.year < self._clock().year
+            is_fresh = (
+                self._clock() - fetched_at
+            ).total_seconds() <= self.settings.remote_cache_ttl_seconds
+            if is_closed_year or (cached_etag is None and is_fresh):
+                return artifact, cached_etag, True
+            if cached_etag is not None:
+                downloaded, etag, not_modified = self._download(
+                    resource, if_none_match=cached_etag
+                )
+                try:
+                    if not_modified:
+                        self._write_annual_cache(
+                            metadata, artifact, resource, cached_etag
+                        )
+                        return artifact, cached_etag, True
+                    downloaded.replace(artifact)
+                finally:
+                    downloaded.unlink(missing_ok=True)
+                self._write_annual_cache(metadata, artifact, resource, etag)
+                return artifact, etag, False
+
+        downloaded, etag, _ = self._download(resource)
+        try:
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            downloaded.replace(artifact)
+        finally:
+            downloaded.unlink(missing_ok=True)
+        self._write_annual_cache(metadata, artifact, resource, etag)
+        return artifact, etag, False
 
     def _normalize(
         self, source: Path, request: RemoteFetchRequest, output: Path
@@ -343,8 +398,27 @@ class PortalSUSRemoteSource:
         establishment_type = row.get("DS_TIPO_UNIDADE", "")
         if request.establishment_type and normalize_search_text(request.establishment_type) not in normalize_search_text(establishment_type):
             return None
+        nature_filter = " - ".join(
+            part
+            for part in (
+                row.get("NATUREZA_JURIDICA", ""),
+                row.get("DESC_NATUREZA_JURIDICA", ""),
+            )
+            if part
+        )
+        if request.legal_nature and normalize_search_text(
+            request.legal_nature
+        ) not in normalize_search_text(nature_filter):
+            return None
+        management = row.get("TP_GESTAO", "")
+        if request.management and normalize_search_text(
+            request.management
+        ) not in normalize_search_text(management):
+            return None
         existing = parse_non_negative_int(row.get("LEITOS_EXISTENTES"), "LEITOS_EXISTENTES")
         sus = parse_non_negative_int(row.get("LEITOS_SUS"), "LEITOS_SUS")
+        if request.sus_agreement is not None and (sus > 0) is not request.sus_agreement:
+            return None
         if not is_within_bed_range(existing, request.min_beds, request.max_beds):
             return None
         nature = " - ".join(
@@ -444,6 +518,7 @@ class PortalSUSRemoteSource:
                 derived_fields=tuple(payload["derived_fields"]), from_cache=True,
                 resource_id=str(payload["resource_id"]),
                 etag=str(payload["etag"]) if payload.get("etag") is not None else None,
+                download_cache_hit=True,
             )
         except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
             return None
@@ -461,13 +536,59 @@ class PortalSUSRemoteSource:
         }
         self._write_json_atomic(metadata, payload)
 
+    def _read_annual_cache(
+        self,
+        metadata: Path,
+        artifact: Path,
+        resource: SourceResource,
+    ) -> tuple[str | None, datetime] | None:
+        if not metadata.is_file() or not artifact.is_file():
+            return None
+        try:
+            payload = json.loads(metadata.read_text(encoding="utf-8"))
+            if (
+                payload["source"] != self.name
+                or int(payload["year"]) != resource.year
+                or payload["resource_id"] != resource.resource_id
+                or payload.get("last_modified") != resource.last_modified
+                or payload["sha256"] != self._file_sha256(artifact)
+            ):
+                return None
+            etag = payload.get("etag")
+            if etag is not None and (
+                not isinstance(etag, str)
+                or len(etag) > 512
+                or any(char in etag for char in "\r\n")
+            ):
+                return None
+            return etag, datetime.fromisoformat(str(payload["fetched_at"]))
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _write_annual_cache(
+        self,
+        metadata: Path,
+        artifact: Path,
+        resource: SourceResource,
+        etag: str | None,
+    ) -> None:
+        self._write_json_atomic(
+            metadata,
+            {
+                "source": self.name,
+                "year": resource.year,
+                "resource_id": resource.resource_id,
+                "last_modified": resource.last_modified,
+                "etag": etag,
+                "fetched_at": self._clock().isoformat(),
+                "sha256": self._file_sha256(artifact),
+            },
+        )
+
     @staticmethod
     def _file_sha256(path: Path) -> str:
-        digest = hashlib.sha256()
         with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+            return hashlib.file_digest(handle, "sha256").hexdigest()
 
     @classmethod
     def _read_competence_cache(
@@ -577,6 +698,9 @@ class PortalSUSRemoteSource:
             "competence": request.competence, "uf": request.uf,
             "municipality": request.municipality,
             "establishment_type": request.establishment_type,
+            "legal_nature": request.legal_nature,
+            "management": request.management,
+            "sus_agreement": request.sus_agreement,
             "min_beds": request.min_beds, "max_beds": request.max_beds,
         }
         return hashlib.sha256(
@@ -589,6 +713,9 @@ class PortalSUSRemoteSource:
         for name, value in (
             ("uf", request.uf), ("municipio", request.municipality),
             ("tipo_estabelecimento", request.establishment_type),
+            ("natureza_juridica", request.legal_nature),
+            ("gestao", request.management),
+            ("convenio_sus", request.sus_agreement),
             ("min_leitos", request.min_beds), ("max_leitos", request.max_beds),
         ):
             if value is not None:

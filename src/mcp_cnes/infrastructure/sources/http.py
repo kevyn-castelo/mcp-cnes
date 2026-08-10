@@ -21,6 +21,7 @@ class DownloadResult:
     final_url: str
     headers: dict[str, str]
     bytes_written: int
+    not_modified: bool = False
 
 
 class ResilientHttpClient:
@@ -57,6 +58,7 @@ class ResilientHttpClient:
                         accept="text/html,application/zip,text/csv;q=0.9,*/*;q=0.1",
                         stream=False,
                         validate_url=validate_url,
+                        extra_headers=None,
                     )
             except requests.Timeout as exc:
                 last_error = CollectorError(
@@ -123,6 +125,7 @@ class ResilientHttpClient:
         destination: Path,
         *,
         validate_url: Callable[[str], bool] | None = None,
+        if_none_match: str | None = None,
     ) -> DownloadResult:
         """Transfere o corpo sob o limite de concorrência e repete falhas de stream."""
 
@@ -137,10 +140,25 @@ class ResilientHttpClient:
                         accept="application/zip,text/csv;q=0.9,*/*;q=0.1",
                         stream=True,
                         validate_url=validate_url,
+                        extra_headers=(
+                            {"If-None-Match": if_none_match}
+                            if if_none_match is not None
+                            else None
+                        ),
                     )
                     if response is None:
                         raise AssertionError("sessão HTTP retornou resposta nula")
                     status = int(response.status_code)
+                    if status == 304:
+                        return DownloadResult(
+                            final_url=final_url,
+                            headers={
+                                str(key): str(value)
+                                for key, value in getattr(response, "headers", {}).items()
+                            },
+                            bytes_written=0,
+                            not_modified=True,
+                        )
                     if status != 200:
                         if status == 429 or status >= 500:
                             raise CollectorError(
@@ -234,6 +252,7 @@ class ResilientHttpClient:
         accept: str,
         stream: bool,
         validate_url: Callable[[str], bool] | None,
+        extra_headers: dict[str, str] | None,
     ) -> tuple[Any, str]:
         """Segue redirects somente depois de validar o próximo destino."""
 
@@ -251,6 +270,7 @@ class ResilientHttpClient:
                 headers={
                     "Accept": accept,
                     "User-Agent": self._settings.remote_user_agent,
+                    **(extra_headers or {}),
                 },
                 timeout=self._settings.request_timeout,
                 allow_redirects=False,
