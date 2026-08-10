@@ -6,6 +6,7 @@ from pathlib import Path
 
 from mcp_cnes.domain.models import LoadSummary
 from mcp_cnes.domain.remote import (
+    RemoteCompetenceResult,
     RemoteFetchRequest,
     RemoteLoadResult,
     SourceResource,
@@ -28,8 +29,12 @@ class ListRemoteCompetences:
     def __init__(self, source: CNESRemoteSource) -> None:
         self._source = source
 
-    def execute(self) -> tuple[str, ...]:
-        return tuple(sorted(set(self._source.list_competences())))
+    def execute(self, year: int | None = None) -> RemoteCompetenceResult:
+        result = self._source.list_competences(year)
+        return RemoteCompetenceResult(
+            year=result.year,
+            competences=tuple(sorted(set(result.competences))),
+        )
 
 
 class ListRemoteResources:

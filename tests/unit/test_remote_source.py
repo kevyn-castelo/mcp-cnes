@@ -20,6 +20,9 @@ CATALOG_URL = "https://dadosabertos.saude.gov.br/dataset/hospitais-e-leitos"
 RESOURCE_URL = (
     "https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/Leitos_SUS/Leitos_2025.csv"
 )
+RESOURCE_URL_2024 = (
+    "https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/Leitos_SUS/Leitos_2024.csv"
+)
 
 
 class Response:
@@ -62,6 +65,17 @@ def catalog_html(*, url: str = RESOURCE_URL, state: str = "active") -> bytes:
         f'"state":"{state}","url":"{url}",'
         '"last_modified":"2026-01-02T00:00:00"}]};</script>'
     ).encode()
+
+
+def catalog_resources(*resources: tuple[int, str, str, str]) -> bytes:
+    payload = ",".join(
+        (
+            f'{{"id":"{resource_id}","name":"Leitos {year}","format":"CSV",'
+            f'"state":"active","url":"{url}","last_modified":"{last_modified}"}}'
+        )
+        for year, url, resource_id, last_modified in resources
+    )
+    return f'<script>window.__data={{"resources":[{payload}]}};</script>'.encode()
 
 
 def annual_csv() -> bytes:
@@ -269,7 +283,155 @@ def test_lists_exact_monthly_competences_from_annual_resource(tmp_path: Path) ->
         sleeper=lambda _: None,
     )
 
-    assert source.list_competences() == ("202501", "202502")
+    result = source.list_competences()
+
+    assert result.year == 2025
+    assert result.competences == ("202501", "202502")
+
+
+def test_competence_discovery_defaults_to_latest_and_downloads_one_resource(
+    tmp_path: Path,
+) -> None:
+    catalog = catalog_resources(
+        (2024, RESOURCE_URL_2024, "resource-2024", "2025-01-01T00:00:00"),
+        (2025, RESOURCE_URL, "resource-2025", "2026-01-02T00:00:00"),
+    )
+    session = Session([Response(catalog), Response(annual_csv())])
+    source = PortalSUSRemoteSource(settings(tmp_path), session=session, sleeper=lambda _: None)
+
+    result = source.list_competences()
+
+    assert result.year == 2025
+    assert result.competences == ("202501", "202502")
+    assert [call["url"] for call in session.calls] == [CATALOG_URL, RESOURCE_URL]
+
+
+def test_competence_discovery_explicit_year_does_not_read_other_resources(
+    tmp_path: Path,
+) -> None:
+    catalog = catalog_resources(
+        (2024, RESOURCE_URL_2024, "resource-2024", "2025-01-01T00:00:00"),
+        (2025, RESOURCE_URL, "resource-2025", "2026-01-02T00:00:00"),
+    )
+    session = Session([Response(catalog), Response(annual_csv().replace(b"2025", b"2024"))])
+    source = PortalSUSRemoteSource(settings(tmp_path), session=session, sleeper=lambda _: None)
+
+    result = source.list_competences(2024)
+
+    assert result.year == 2024
+    assert result.competences == ("202401", "202402")
+    assert [call["url"] for call in session.calls] == [CATALOG_URL, RESOURCE_URL_2024]
+
+
+def test_competence_discovery_rejects_unavailable_year_without_download(
+    tmp_path: Path,
+) -> None:
+    session = Session([Response(catalog_html())])
+    source = PortalSUSRemoteSource(settings(tmp_path), session=session, sleeper=lambda _: None)
+
+    with pytest.raises(CollectorError) as captured:
+        source.list_competences(2024)
+
+    assert captured.value.code == "remote_competence_unavailable"
+    assert "2024" in str(captured.value)
+    assert [call["url"] for call in session.calls] == [CATALOG_URL]
+
+
+def test_new_source_instance_reuses_versioned_competence_cache(tmp_path: Path) -> None:
+    first_session = Session([Response(catalog_html()), Response(annual_csv())])
+    first = PortalSUSRemoteSource(
+        settings(tmp_path), session=first_session, sleeper=lambda _: None
+    )
+    assert first.list_competences().competences == ("202501", "202502")
+
+    second_session = Session([Response(catalog_html())])
+    second = PortalSUSRemoteSource(
+        settings(tmp_path), session=second_session, sleeper=lambda _: None
+    )
+
+    assert second.list_competences().competences == ("202501", "202502")
+    assert [call["url"] for call in second_session.calls] == [CATALOG_URL]
+
+
+@pytest.mark.parametrize("changed_field", ["resource_id", "last_modified"])
+def test_changed_resource_version_invalidates_competence_cache(
+    tmp_path: Path, changed_field: str
+) -> None:
+    now = [datetime(2026, 8, 9, tzinfo=UTC)]
+    initial_catalog = catalog_resources(
+        (2025, RESOURCE_URL, "resource-2025", "2026-01-02T00:00:00"),
+    )
+    resource_id = "resource-republished" if changed_field == "resource_id" else "resource-2025"
+    modified = (
+        "2026-02-03T00:00:00"
+        if changed_field == "last_modified"
+        else "2026-01-02T00:00:00"
+    )
+    changed_catalog = catalog_resources((2025, RESOURCE_URL, resource_id, modified))
+    session = Session(
+        [
+            Response(initial_catalog),
+            Response(annual_csv()),
+            Response(changed_catalog),
+            Response(annual_csv().replace(b"202502", b"202503")),
+        ]
+    )
+    source = PortalSUSRemoteSource(
+        settings(tmp_path, remote_cache_ttl_seconds=1),
+        session=session,
+        sleeper=lambda _: None,
+        clock=lambda: now[0],
+    )
+
+    assert source.list_competences().competences == ("202501", "202502")
+    now[0] += timedelta(seconds=2)
+    assert source.list_competences().competences == ("202501", "202503")
+    assert [call["url"] for call in session.calls] == [
+        CATALOG_URL,
+        RESOURCE_URL,
+        CATALOG_URL,
+        RESOURCE_URL,
+    ]
+
+
+def test_competence_cache_is_isolated_by_year(tmp_path: Path) -> None:
+    catalog = catalog_resources(
+        (2024, RESOURCE_URL_2024, "resource-2024", "2025-01-01T00:00:00"),
+        (2025, RESOURCE_URL, "resource-2025", "2026-01-02T00:00:00"),
+    )
+    session = Session(
+        [
+            Response(catalog),
+            Response(annual_csv().replace(b"2025", b"2024")),
+            Response(annual_csv()),
+        ]
+    )
+    source = PortalSUSRemoteSource(settings(tmp_path), session=session, sleeper=lambda _: None)
+
+    assert source.list_competences(2024).competences == ("202401", "202402")
+    assert source.list_competences(2025).competences == ("202501", "202502")
+    assert source.list_competences(2024).competences == ("202401", "202402")
+    assert [call["url"] for call in session.calls] == [
+        CATALOG_URL,
+        RESOURCE_URL_2024,
+        RESOURCE_URL,
+    ]
+
+
+def test_competence_discovery_uses_latest_version_within_selected_year(
+    tmp_path: Path,
+) -> None:
+    catalog = catalog_resources(
+        (2025, RESOURCE_URL_2024, "resource-old", "2026-01-01T00:00:00"),
+        (2025, RESOURCE_URL, "resource-current", "2026-02-01T00:00:00"),
+    )
+    session = Session([Response(catalog), Response(annual_csv())])
+    source = PortalSUSRemoteSource(settings(tmp_path), session=session, sleeper=lambda _: None)
+
+    result = source.list_competences(2025)
+
+    assert result.competences == ("202501", "202502")
+    assert [call["url"] for call in session.calls] == [CATALOG_URL, RESOURCE_URL]
 
 
 def test_download_retries_stream_failure_and_removes_partial_file(tmp_path: Path) -> None:

@@ -12,8 +12,9 @@ não raspa o ElasticNES/Kibana e não fixa URLs de arquivos de competência.
   prefixo `/ckan.saude.gov.br/Leitos_SUS/`.
 - Formato observado: ZIP com um CSV anual, separador `;`, codificação Latin-1.
 - Competência: coluna `COMP`, no formato mensal `YYYYMM`. O catálogo anuncia o
-  arquivo anual, e `cnes_list_competencias` indexa os valores realmente presentes
-  nessa coluna para listar somente competências mensais disponíveis.
+  arquivo anual, e `cnes_list_competencias(ano?)` indexa os valores realmente
+  presentes em um único recurso. Sem `ano`, consulta somente o arquivo do maior
+  ano publicado; para histórico, o cliente faz uma chamada explícita por ano.
 - Autenticação: nenhuma.
 
 O arquivo anual observado cobre diretamente `COMP`, `UF`, `MUNICIPIO`, `CNES`,

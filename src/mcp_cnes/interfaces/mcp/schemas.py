@@ -104,6 +104,7 @@ class SourceListOutput(ContractModel):
 
 class CompetenceListOutput(ContractModel):
     fonte: str
+    ano_consultado: int
     competencias_disponiveis: list[str]
     mais_recente: str | None
     granularidade: str

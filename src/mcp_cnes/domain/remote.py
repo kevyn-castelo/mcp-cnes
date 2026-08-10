@@ -20,6 +20,14 @@ class SourceResource:
 
 
 @dataclass(frozen=True)
+class RemoteCompetenceResult:
+    """Competências mensais encontradas em um único recurso anual."""
+
+    year: int
+    competences: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class RemoteFetchRequest:
     """Filtros solicitados para gerar um CSV canônico local."""
 
