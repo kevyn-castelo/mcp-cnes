@@ -22,7 +22,14 @@ async def test_last_known_good_checkout_uses_an_official_mcp_entrypoint(
     environment["MCP_CNES_ALLOWED_CSV_FILES"] = "valid.csv"
     parameters = StdioServerParameters(
         command="uv",
-        args=["--directory", str(ROOT), "run", "--locked", "mcp-cnes"],
+        args=[
+            "--directory",
+            str(ROOT),
+            "run",
+            "--locked",
+            "--no-sync",
+            "mcp-cnes",
+        ],
         env=environment,
     )
 
@@ -44,7 +51,7 @@ async def test_last_known_good_checkout_uses_an_official_mcp_entrypoint(
 
     assert prepared.is_error is False
     assert database.exists()
-    assert len(tools.tools) == 6
+    assert len(tools.tools) >= 6
     assert all(result.is_error is False for result in results)
     assert results[2].structured_content["estabelecimento"]["cnes"] == "1234567"
     assert results[0].structured_content["total_estabelecimentos"] == 1
@@ -60,7 +67,14 @@ async def test_rollback_detects_catalog_loss_before_any_reload(tmp_path: Path) -
     environment["MCP_CNES_ALLOWED_CSV_FILES"] = "valid.csv"
     parameters = StdioServerParameters(
         command="uv",
-        args=["--directory", str(ROOT), "run", "--locked", "mcp-cnes"],
+        args=[
+            "--directory",
+            str(ROOT),
+            "run",
+            "--locked",
+            "--no-sync",
+            "mcp-cnes",
+        ],
         env=environment,
     )
 

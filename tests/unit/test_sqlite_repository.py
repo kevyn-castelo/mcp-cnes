@@ -9,7 +9,7 @@ import pytest
 
 from mcp_cnes.domain.models import HospitalInfo, LoadSummary, RejectionReason
 from mcp_cnes.infrastructure.persistence import SQLiteCNESRepository
-from mcp_cnes.infrastructure.persistence.sqlite import MIGRATION_1, SCHEMA_VERSION
+from mcp_cnes.infrastructure.persistence.sqlite import MIGRATION_1, MIGRATION_2, SCHEMA_VERSION
 
 
 def hospital(cnes: str, municipality: str = "Manaus", uf: str = "AM", beds: int = 50):
@@ -90,6 +90,56 @@ def test_migrates_version_one_database_and_builds_municipality_search_index(
         ).fetchone()
     assert table is not None
     assert "tokenize='trigram'" in table[0]
+
+
+def test_recovers_partially_applied_version_three_migration(tmp_path: Path) -> None:
+    database = tmp_path / "partial-v3.sqlite3"
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.executescript(MIGRATION_1)
+        connection.executescript(MIGRATION_2)
+        connection.execute(
+            "ALTER TABLE import_batches ADD COLUMN source "
+            "TEXT NOT NULL DEFAULT 'arquivo_local'"
+        )
+        connection.execute("PRAGMA user_version = 2")
+
+    repository = SQLiteCNESRepository(database)
+    repository.replace_all([hospital("0000001")], "fixture.csv", batch_id="recovered")
+
+    with closing(sqlite3.connect(database)) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(import_batches)")}
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        migrations = connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 3"
+        ).fetchone()[0]
+    assert {"source", "competence", "filters_json"}.issubset(columns)
+    assert version == 3
+    assert migrations == 1
+
+
+def test_version_three_migration_rolls_back_all_columns_on_failure(tmp_path: Path) -> None:
+    database = tmp_path / "rollback-v3.sqlite3"
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.executescript(MIGRATION_1)
+        connection.executescript(MIGRATION_2)
+        connection.execute("PRAGMA user_version = 2")
+        connection.execute(
+            """
+            CREATE TRIGGER reject_migration_three BEFORE INSERT ON schema_migrations
+            WHEN NEW.version = 3
+            BEGIN SELECT RAISE(ABORT, 'injected migration failure'); END
+            """
+        )
+
+    repository = SQLiteCNESRepository(database)
+    with pytest.raises(sqlite3.IntegrityError, match="injected migration failure"):
+        repository.has_data()
+
+    with closing(sqlite3.connect(database)) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(import_batches)")}
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+    assert {"source", "competence", "filters_json"}.isdisjoint(columns)
+    assert version == 2
 
 
 def test_reimporting_same_batch_is_idempotent(tmp_path: Path) -> None:

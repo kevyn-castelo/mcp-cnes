@@ -15,6 +15,28 @@ como baseline de paridade e não deve ser usado como rollback por clientes MCP.
 | `cnes_search_uf` | Busca estabelecimentos por UF |
 | `cnes_statistics` | Retorna estatísticas dos dados carregados |
 | `cnes_download_instructions` | Explica como obter o CSV manualmente |
+| `cnes_list_sources` / `cnes_list_competencias` | Descobre a fonte oficial e as competências mensais `YYYYMM` disponíveis |
+| `cnes_fetch` | Baixa, filtra, normaliza e opcionalmente ativa uma competência |
+| `cnes_normalize` / `cnes_validate_dataset` | Normaliza CSV local e verifica qualidade do lote |
+| `cnes_list_lotes` / `cnes_use_lote` / `cnes_purge` | Gerencia histórico, lote ativo e cache |
+| `cnes_aggregate` / `cnes_timeseries` / `cnes_diff` | Executa análises sobre lotes retidos |
+| `cnes_search_advanced` / `cnes_export` | Combina filtros e exporta CSV, JSON ou XLSX |
+
+## Fluxo remoto e fluxo manual
+
+No fluxo recomendado, use `cnes_list_competencias` e depois `cnes_fetch` com uma
+competência `YYYYMM`. A tool descobre o arquivo no catálogo oficial, aplica os
+filtros localmente, gera um CSV canônico e, por padrão, carrega o resultado como
+lote ativo. A resposta informa a fonte, cache, campos derivados e quais filtros
+foram nativos ou locais.
+
+O fluxo anterior continua disponível: obtenha as instruções com
+`cnes_download_instructions` e carregue um CSV aprovado com `cnes_load_data`.
+As seis tools históricas mantêm assinaturas e schemas congelados; elas sempre
+consultam o lote ativo. Para consultar outro lote sem alterar seus contratos, use
+`cnes_use_lote` antes da busca.
+
+Detalhes e limitações das integrações estão em [docs/fontes.md](docs/fontes.md).
 
 ## Requisitos
 
@@ -110,6 +132,11 @@ iniciar rede, browser ou processamento de arquivos. Os principais nomes são:
 | `MCP_CNES_BASE_URL`, `MCP_CNES_KIBANA_API`, `MCP_CNES_DASHBOARD_URL` | ElastiCNES |
 | `MCP_CNES_KIBANA_INDEX` | padrão de índice; default `cnes-leitos*` |
 | `MCP_CNES_REQUEST_TIMEOUT` / `MCP_CNES_BROWSER_TIMEOUT_MS` | `60` / `60000` |
+| `MCP_CNES_REMOTE_DIR` / `MCP_CNES_REMOTE_CACHE_DIR` | ao lado do banco SQLite |
+| `MCP_CNES_REMOTE_CACHE_TTL_SECONDS` | `86400` |
+| `MCP_CNES_REMOTE_MAX_DOWNLOAD_BYTES` | `104857600` |
+| `MCP_CNES_REMOTE_MAX_CONCURRENCY` | `2` |
+| `MCP_CNES_REMOTE_USER_AGENT` | identificação do projeto e repositório |
 
 Delays e retries também podem ser definidos com `MCP_CNES_MIN_DELAY`,
 `MCP_CNES_MAX_DELAY`, `MCP_CNES_MAX_RETRIES` e `MCP_CNES_RETRY_DELAY`.
@@ -245,7 +272,8 @@ e da aprovação explícita do responsável.
 
 ## Fonte dos dados
 
-Os CSVs são obtidos dos dashboards do Ministério da Saúde:
+O fluxo automático usa o dataset oficial Hospitais e Leitos do Portal de Dados
+Abertos do SUS. Os dashboards abaixo permanecem como alternativa manual:
 
 - Leitos: <https://elasticnes.saude.gov.br/leitos>
 - Geral: <https://elasticnes.saude.gov.br/geral>

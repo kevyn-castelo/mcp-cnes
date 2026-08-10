@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 import logging
 import sqlite3
@@ -26,15 +27,20 @@ from .staging import DiskHospitalSequence
 logger = logging.getLogger(__name__)
 
 COLUMN_MAP = {
+    "COMP": "competencia",
     "CNES": "cnes",
+    "NOME_ESTABELECIMENTO": "nome_fantasia",
     "NOME_FANTASIA": "nome_fantasia",
     "MUNICIPIO": "municipio",
     "UF": "uf",
     "TIPO_DO_ESTABELECIMENTO": "tipo_estabelecimento",
     "TIPO_ESTABELECIMENTO": "tipo_estabelecimento",
+    "DS_TIPO_UNIDADE": "tipo_estabelecimento",
     "NATUREZA_JURIDICA_CATEGORIA": "natureza_juridica",
     "NATUREZA_JURIDICA": "natureza_juridica",
+    "DESC_NATUREZA_JURIDICA": "natureza_juridica",
     "GESTAO": "gestao",
+    "TP_GESTAO": "gestao",
     "CONVENIO_SUS": "convenio_sus",
     "LEITOS_EXISTENTES": "leitos_existentes",
     "LEITOS_SUS": "leitos_sus",
@@ -51,8 +57,21 @@ class CsvCNESImporter:
         rejection_reasons: Counter[str] = Counter()
 
         try:
-            with filepath.open("r", encoding="utf-8-sig", newline="") as file:
-                reader = csv.DictReader(file)
+            with filepath.open("rb") as binary:
+                sample_bytes = binary.read(65_536)
+                try:
+                    sample = sample_bytes.decode("utf-8-sig")
+                    encoding = "utf-8-sig"
+                except UnicodeDecodeError:
+                    sample = sample_bytes.decode("latin-1")
+                    encoding = "latin-1"
+                try:
+                    delimiter = csv.Sniffer().sniff(sample, delimiters=",;|").delimiter
+                except csv.Error:
+                    delimiter = ","
+                binary.seek(0)
+                file = io.TextIOWrapper(binary, encoding=encoding, newline="")
+                reader = csv.DictReader(file, delimiter=delimiter)
                 if not reader.fieldnames:
                     raise CNESDataLoadError("CSV sem cabeçalho")
                 headers = {
@@ -83,6 +102,7 @@ class CsvCNESImporter:
                         rejection_reasons["cnes_ausente"] += 1
                         continue
                     staged.merge(hospital, rows_read)
+                file.detach()
 
             staged.seal()
             summary = LoadSummary(
@@ -118,9 +138,40 @@ class CsvCNESImporter:
             attribute = headers.get(original)
             if attribute:
                 data[attribute] = value.strip() if value else ""
+        normalized_source = {
+            normalize_column_name(original): (value or "").strip()
+            for original, value in row.items()
+        }
+        type_parts = (
+            normalized_source.get("CO_TIPO_UNIDADE", ""),
+            normalized_source.get("DS_TIPO_UNIDADE", ""),
+        )
+        if any(type_parts):
+            data["tipo_estabelecimento"] = " - ".join(
+                part for part in type_parts if part
+            )
+        nature_parts = (
+            normalized_source.get("NATUREZA_JURIDICA", ""),
+            normalized_source.get("DESC_NATUREZA_JURIDICA", ""),
+        )
+        if any(nature_parts):
+            data["natureza_juridica"] = " - ".join(
+                part for part in nature_parts if part
+            )
         cnes = str(data.get("cnes", "")).strip()
         if not cnes:
             return None
+        existing_beds = parse_non_negative_int(
+            data.get("leitos_existentes"), "LEITOS_EXISTENTES"
+        )
+        sus_beds = parse_non_negative_int(data.get("leitos_sus"), "LEITOS_SUS")
+        convenio_value = data.get("convenio_sus")
+        if convenio_value is not None and str(convenio_value).strip():
+            convenio_sus = parse_bool(convenio_value)
+        elif "leitos_sus" in data:
+            convenio_sus = sus_beds > 0
+        else:
+            convenio_sus = True
         return HospitalInfo(
             cnes=cnes,
             nome_fantasia=str(data.get("nome_fantasia", "")),
@@ -129,10 +180,8 @@ class CsvCNESImporter:
             tipo_estabelecimento=str(data.get("tipo_estabelecimento", "")),
             natureza_juridica=str(data.get("natureza_juridica", "")),
             gestao=str(data.get("gestao", "")),
-            convenio_sus=parse_bool(data.get("convenio_sus")),
-            leitos_existentes=parse_non_negative_int(
-                data.get("leitos_existentes"), "LEITOS_EXISTENTES"
-            ),
-            leitos_sus=parse_non_negative_int(data.get("leitos_sus"), "LEITOS_SUS"),
+            convenio_sus=convenio_sus,
+            leitos_existentes=existing_beds,
+            leitos_sus=sus_beds,
             competencia=str(data.get("competencia", "")),
         )

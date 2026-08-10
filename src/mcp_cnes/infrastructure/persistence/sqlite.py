@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -16,7 +16,7 @@ from mcp_cnes.domain.identity import canonical_hospital_digest
 from mcp_cnes.domain.models import HospitalInfo, LoadSummary
 from mcp_cnes.domain.rules import normalize_search_text
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 MIGRATION_1 = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -89,7 +89,17 @@ INSERT INTO establishments_municipality_fts(establishments_municipality_fts)
 VALUES('rebuild');
 """
 
-MIGRATIONS = {1: MIGRATION_1, 2: MIGRATION_2}
+MIGRATION_3_COLUMNS = {
+    "source": "TEXT NOT NULL DEFAULT 'arquivo_local'",
+    "competence": "TEXT",
+    "filters_json": "TEXT NOT NULL DEFAULT '{}'",
+}
+MIGRATION_3 = """
+CREATE INDEX IF NOT EXISTS idx_import_batches_imported_at
+    ON import_batches(imported_at DESC);
+"""
+
+MIGRATIONS = {1: MIGRATION_1, 2: MIGRATION_2, 3: MIGRATION_3}
 
 HOSPITAL_COLUMNS = """
     cnes, nome_fantasia, municipio, uf, tipo_estabelecimento,
@@ -141,6 +151,9 @@ class SQLiteCNESRepository:
             if version > SCHEMA_VERSION:
                 raise RuntimeError("Banco SQLite usa uma versao de schema nao suportada")
             for target_version in range(version + 1, SCHEMA_VERSION + 1):
+                if target_version == 3:
+                    self._apply_migration_3(connection)
+                    continue
                 connection.executescript(MIGRATIONS[target_version])
                 applied_at = datetime.now(UTC).isoformat()
                 connection.execute(
@@ -150,6 +163,42 @@ class SQLiteCNESRepository:
                 connection.execute(f"PRAGMA user_version = {target_version}")
             self._schema_ready = True
 
+    @staticmethod
+    def _apply_migration_3(connection: sqlite3.Connection) -> None:
+        """Aplica e recupera a migração aditiva sob um único write lock."""
+
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            current = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            if current >= 3:
+                connection.commit()
+                return
+            if current != 2:
+                raise RuntimeError("Migração 3 exige schema SQLite na versão 2")
+            existing = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(import_batches)")
+            }
+            for name, definition in MIGRATION_3_COLUMNS.items():
+                if name not in existing:
+                    connection.execute(
+                        f"ALTER TABLE import_batches ADD COLUMN {name} {definition}"
+                    )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_import_batches_imported_at "
+                "ON import_batches(imported_at DESC)"
+            )
+            applied_at = datetime.now(UTC).isoformat()
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)",
+                (applied_at,),
+            )
+            connection.execute("PRAGMA user_version = 3")
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+
     def replace_all(
         self,
         hospitals: Sequence[HospitalInfo],
@@ -158,6 +207,9 @@ class SQLiteCNESRepository:
         *,
         summary: LoadSummary | None = None,
         batch_id: str | None = None,
+        source: str = "arquivo_local",
+        competence: str | None = None,
+        filters: Mapping[str, Any] | None = None,
     ) -> str:
         effective_summary = summary or LoadSummary(len(hospitals), len(hospitals), 0, 0)
         effective_batch_id = batch_id or canonical_hospital_digest(hospitals)
@@ -180,19 +232,35 @@ class SQLiteCNESRepository:
                         (effective_batch_id,),
                     ).fetchone()[0]
                     if active:
+                        self._update_batch_metadata_row(
+                            connection,
+                            effective_batch_id,
+                            source,
+                            competence,
+                            filters or {},
+                        )
                         self._purge_old_batches(connection, effective_batch_id)
                         connection.commit()
                         return effective_batch_id
-                    connection.execute(
-                        "DELETE FROM import_batches WHERE id = ?", (effective_batch_id,)
+                    self._replace_projection(connection, effective_batch_id, timestamp)
+                    self._update_batch_metadata_row(
+                        connection,
+                        effective_batch_id,
+                        source,
+                        competence,
+                        filters or {},
                     )
+                    self._purge_old_batches(connection, effective_batch_id)
+                    connection.commit()
+                    return effective_batch_id
 
                 connection.execute(
                     """
                     INSERT INTO import_batches(
                         id, source_file, status, rows_read, accepted_count,
-                        rejected_count, ignored_count, rejection_reasons, imported_at
-                    ) VALUES (?, ?, 'processing', ?, ?, ?, ?, ?, ?)
+                        rejected_count, ignored_count, rejection_reasons, imported_at,
+                        source, competence, filters_json
+                    ) VALUES (?, ?, 'processing', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         effective_batch_id,
@@ -203,6 +271,9 @@ class SQLiteCNESRepository:
                         effective_summary.rows_ignored,
                         reasons,
                         timestamp,
+                        source,
+                        competence,
+                        json.dumps(filters or {}, ensure_ascii=False, sort_keys=True),
                     ),
                 )
                 connection.executemany(
@@ -227,6 +298,27 @@ class SQLiteCNESRepository:
                 connection.rollback()
                 raise
         return effective_batch_id
+
+    def replace_all_with_metadata(
+        self,
+        hospitals: Sequence[HospitalInfo],
+        source_file: str,
+        *,
+        summary: LoadSummary,
+        batch_id: str | None,
+        source: str,
+        competence: str | None,
+        filters: Mapping[str, Any],
+    ) -> str:
+        return self.replace_all(
+            hospitals,
+            source_file,
+            summary=summary,
+            batch_id=batch_id,
+            source=source,
+            competence=competence,
+            filters=filters,
+        )
 
     def _purge_old_batches(
         self, connection: sqlite3.Connection, current_batch_id: str
@@ -514,6 +606,417 @@ class SQLiteCNESRepository:
             "ultima_atualizacao": metadata["imported_at"] if metadata else None,
             "arquivo_fonte": metadata["source_file"] if metadata else None,
         }
+
+    def _active_batch_id(self, connection: sqlite3.Connection) -> str | None:
+        row = connection.execute(
+            "SELECT batch_id FROM establishments LIMIT 1"
+        ).fetchone()
+        return str(row[0]) if row else None
+
+    def _require_batch(
+        self, connection: sqlite3.Connection, batch_id: str | None
+    ) -> str:
+        selected = batch_id or self._active_batch_id(connection)
+        if selected is None:
+            raise ValueError("Nenhum lote ativo")
+        exists = connection.execute(
+            "SELECT 1 FROM import_batches WHERE id = ? AND status = 'completed'",
+            (selected,),
+        ).fetchone()
+        if exists is None:
+            raise ValueError(f"Lote inexistente: {selected}")
+        return selected
+
+    def list_batches(self) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            active = self._active_batch_id(connection)
+            rows = connection.execute(
+                """
+                SELECT id, source_file, source, competence, filters_json,
+                       accepted_count, imported_at
+                FROM import_batches
+                WHERE status = 'completed'
+                ORDER BY imported_at DESC, id DESC
+                """
+            ).fetchall()
+        return [
+            {
+                "lote_id": row["id"],
+                "arquivo_fonte": row["source_file"],
+                "fonte": row["source"],
+                "competencia": row["competence"],
+                "filtros": json.loads(row["filters_json"]),
+                "registros": row["accepted_count"],
+                "importado_em": row["imported_at"],
+                "ativo": row["id"] == active,
+            }
+            for row in rows
+        ]
+
+    def update_batch_metadata(
+        self,
+        batch_id: str,
+        source: str,
+        competence: str | None,
+        filters: Mapping[str, Any],
+    ) -> None:
+        with self._connection() as connection, connection:
+            self._update_batch_metadata_row(
+                connection, batch_id, source, competence, filters
+            )
+
+    @staticmethod
+    def _update_batch_metadata_row(
+        connection: sqlite3.Connection,
+        batch_id: str,
+        source: str,
+        competence: str | None,
+        filters: Mapping[str, Any],
+    ) -> None:
+        cursor = connection.execute(
+            """
+            UPDATE import_batches
+            SET source = ?, competence = ?, filters_json = ?
+            WHERE id = ? AND status = 'completed'
+            """,
+            (
+                source,
+                competence,
+                json.dumps(filters, ensure_ascii=False, sort_keys=True),
+                batch_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError(f"Lote inexistente: {batch_id}")
+
+    def activate_batch(self, batch_id: str) -> None:
+        timestamp = datetime.now(UTC).isoformat()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                selected = self._require_batch(connection, batch_id)
+                self._replace_projection(connection, selected, timestamp)
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+
+    def purge_batch(self, batch_id: str) -> tuple[int, int]:
+        with self._connection() as connection:
+            page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
+            free_before = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                selected = self._require_batch(connection, batch_id)
+                count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM staging_establishments WHERE batch_id = ?",
+                        (selected,),
+                    ).fetchone()[0]
+                )
+                was_active = selected == self._active_batch_id(connection)
+                if was_active:
+                    connection.execute("DELETE FROM establishments")
+                connection.execute("DELETE FROM import_batches WHERE id = ?", (selected,))
+                if was_active:
+                    replacement = connection.execute(
+                        """
+                        SELECT id FROM import_batches WHERE status = 'completed'
+                        ORDER BY imported_at DESC, id DESC LIMIT 1
+                        """
+                    ).fetchone()
+                    if replacement:
+                        self._replace_projection(
+                            connection, str(replacement[0]), datetime.now(UTC).isoformat()
+                        )
+                    else:
+                        connection.execute(
+                            "INSERT INTO establishments_municipality_fts"
+                            "(establishments_municipality_fts) VALUES('rebuild')"
+                        )
+                connection.commit()
+                free_after = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+                return count, max(0, free_after - free_before) * page_size
+            except BaseException:
+                connection.rollback()
+                raise
+
+    def validate_dataset(self, batch_id: str | None = None) -> dict[str, Any]:
+        text_columns = (
+            "cnes",
+            "nome_fantasia",
+            "municipio",
+            "uf",
+            "tipo_estabelecimento",
+            "natureza_juridica",
+            "gestao",
+            "competencia",
+        )
+        with self._connection() as connection:
+            selected = self._require_batch(connection, batch_id)
+            total = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM staging_establishments WHERE batch_id = ?",
+                    (selected,),
+                ).fetchone()[0]
+            )
+            empty = {
+                column: int(
+                    connection.execute(
+                        f"SELECT COUNT(*) FROM staging_establishments "
+                        f"WHERE batch_id = ? AND trim({column}) = ''",
+                        (selected,),
+                    ).fetchone()[0]
+                )
+                for column in text_columns
+            }
+            duplicates = int(
+                connection.execute(
+                    """
+                    SELECT COALESCE(SUM(total - 1), 0) FROM (
+                        SELECT COUNT(*) AS total FROM staging_establishments
+                        WHERE batch_id = ? GROUP BY cnes, competencia HAVING COUNT(*) > 1
+                    )
+                    """,
+                    (selected,),
+                ).fetchone()[0]
+            )
+            competences = [
+                str(row[0])
+                for row in connection.execute(
+                    """
+                    SELECT DISTINCT competencia FROM staging_establishments
+                    WHERE batch_id = ? ORDER BY competencia
+                    """,
+                    (selected,),
+                )
+                if row[0]
+            ]
+            invalid_beds = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) FROM staging_establishments
+                    WHERE batch_id = ? AND (leitos_existentes < 0 OR leitos_sus < 0)
+                    """,
+                    (selected,),
+                ).fetchone()[0]
+            )
+        return {
+            "lote_id": selected,
+            "total_registros": total,
+            "campos_vazios": empty,
+            "cnes_duplicados": duplicates,
+            "competencias": competences,
+            "competencias_mistas": len(competences) > 1,
+            "leitos_invalidos": invalid_beds,
+            "valido": total > 0 and duplicates == 0 and invalid_beds == 0,
+        }
+
+    @staticmethod
+    def _staging_filters(filters: Mapping[str, Any]) -> tuple[list[str], list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        exact = {"uf": "uf", "gestao": "gestao", "convenio_sus": "convenio_sus"}
+        partial = {
+            "municipio": "municipio_normalizado",
+            "tipo_estabelecimento": "tipo_estabelecimento",
+            "natureza_juridica": "natureza_juridica",
+        }
+        for name, column in exact.items():
+            if (value := filters.get(name)) is not None:
+                clauses.append(f"{column} = ?")
+                params.append(int(value) if name == "convenio_sus" else str(value).upper())
+        for name, column in partial.items():
+            if value := filters.get(name):
+                clauses.append(f"instr(lower({column}), lower(?)) > 0")
+                params.append(
+                    normalize_search_text(str(value)) if name == "municipio" else str(value)
+                )
+        if (value := filters.get("min_leitos")) is not None:
+            clauses.append("leitos_existentes >= ?")
+            params.append(int(value))
+        if (value := filters.get("max_leitos")) is not None:
+            clauses.append("leitos_existentes <= ?")
+            params.append(int(value))
+        return clauses, params
+
+    def aggregate(
+        self,
+        group_by: str,
+        metric: str,
+        filters: Mapping[str, Any],
+        batch_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        groups = {
+            "uf": "uf",
+            "municipio": "municipio",
+            "tipo": "tipo_estabelecimento",
+            "natureza": "natureza_juridica",
+            "gestao": "gestao",
+        }
+        metrics = {
+            "estabelecimentos": "COUNT(*)",
+            "leitos_existentes": "SUM(leitos_existentes)",
+            "leitos_sus": "SUM(leitos_sus)",
+            "media_leitos": "AVG(leitos_existentes)",
+        }
+        if group_by not in groups or metric not in metrics:
+            raise ValueError("group_by ou metrica não suportada")
+        with self._connection() as connection:
+            selected = self._require_batch(connection, batch_id)
+            clauses, params = self._staging_filters(filters)
+            where = " AND ".join(["batch_id = ?", *clauses])
+            rows = connection.execute(
+                f"SELECT {groups[group_by]} AS grupo, {metrics[metric]} AS valor "
+                f"FROM staging_establishments WHERE {where} "
+                "GROUP BY grupo ORDER BY valor DESC, grupo",
+                [selected, *params],
+            ).fetchall()
+        return [{"grupo": row["grupo"], "valor": row["valor"]} for row in rows]
+
+    def timeseries(
+        self, key: str, key_type: str, start: str, end: str
+    ) -> list[dict[str, Any]]:
+        if key_type not in {"cnes", "municipio"}:
+            raise ValueError("tipo_chave deve ser cnes ou municipio")
+        column = "cnes" if key_type == "cnes" else "municipio_normalizado"
+        value = key if key_type == "cnes" else normalize_search_text(key)
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"""
+                WITH ranked AS (
+                    SELECT s.*,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY s.cnes, s.competencia
+                               ORDER BY b.imported_at DESC, b.id DESC
+                           ) AS position
+                    FROM staging_establishments s
+                    JOIN import_batches b ON b.id = s.batch_id
+                    WHERE s.competencia BETWEEN ? AND ? AND s.{column} = ?
+                )
+                SELECT competencia, COUNT(*) AS estabelecimentos,
+                       SUM(leitos_existentes) AS leitos_existentes,
+                       SUM(leitos_sus) AS leitos_sus
+                FROM ranked WHERE position = 1
+                GROUP BY competencia ORDER BY competencia
+                """,
+                (start, end, value),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def diff_batches(self, batch_a: str, batch_b: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            left_id = self._require_batch(connection, batch_a)
+            right_id = self._require_batch(connection, batch_b)
+            metadata = {
+                row["id"]: row["filters_json"]
+                for row in connection.execute(
+                    "SELECT id, filters_json FROM import_batches WHERE id IN (?, ?)",
+                    (left_id, right_id),
+                )
+            }
+            left_rows = connection.execute(
+                "SELECT cnes, competencia, leitos_existentes, leitos_sus "
+                "FROM staging_establishments WHERE batch_id = ?",
+                (left_id,),
+            ).fetchall()
+            right_rows = connection.execute(
+                "SELECT cnes, competencia, leitos_existentes, leitos_sus "
+                "FROM staging_establishments WHERE batch_id = ?",
+                (right_id,),
+            ).fetchall()
+        mixed = (
+            len({str(row["competencia"]) for row in left_rows}) > 1
+            or len({str(row["competencia"]) for row in right_rows}) > 1
+        )
+        key = (
+            (lambda row: (str(row["cnes"]), str(row["competencia"])))
+            if mixed
+            else (lambda row: (str(row["cnes"]), ""))
+        )
+        left = {key(row): row for row in left_rows}
+        right = {key(row): row for row in right_rows}
+        def display_key(item: tuple[str, str]) -> str:
+            return f"{item[0]}@{item[1]}" if mixed else item[0]
+
+        entered = [display_key(item) for item in sorted(right.keys() - left.keys())]
+        exited = [display_key(item) for item in sorted(left.keys() - right.keys())]
+        changed = [
+            {
+                "cnes": item[0],
+                "competencia_a": str(left[item]["competencia"]) if mixed else None,
+                "competencia_b": str(right[item]["competencia"]) if mixed else None,
+                "leitos_existentes_a": left[item]["leitos_existentes"],
+                "leitos_existentes_b": right[item]["leitos_existentes"],
+                "leitos_sus_a": left[item]["leitos_sus"],
+                "leitos_sus_b": right[item]["leitos_sus"],
+            }
+            for item in sorted(left.keys() & right.keys())
+            if (
+                left[item]["leitos_existentes"],
+                left[item]["leitos_sus"],
+            )
+            != (
+                right[item]["leitos_existentes"],
+                right[item]["leitos_sus"],
+            )
+        ]
+        return {
+            "lote_a": left_id,
+            "lote_b": right_id,
+            "entraram": entered,
+            "sairam": exited,
+            "mudaram_leitos": changed,
+            "avisos": (
+                []
+                if metadata.get(left_id) == metadata.get(right_id)
+                else [
+                    "Os lotes possuem filtros de origem diferentes; entradas e saídas "
+                    "podem refletir cobertura, não mudança cadastral."
+                ]
+            ),
+        }
+
+    def advanced_search(
+        self,
+        filters: Mapping[str, Any],
+        order_by: str,
+        offset: int,
+        limit: int,
+        batch_id: str | None = None,
+    ) -> tuple[list[HospitalInfo], int]:
+        orders = {
+            "cnes": "cnes",
+            "municipio": "municipio_normalizado, cnes",
+            "leitos_existentes": "leitos_existentes DESC, cnes",
+            "leitos_sus": "leitos_sus DESC, cnes",
+        }
+        if order_by not in orders:
+            raise ValueError("order_by não suportado")
+        with self._connection() as connection:
+            selected = self._require_batch(connection, batch_id)
+            clauses, params = self._staging_filters(filters)
+            where = " AND ".join(["batch_id = ?", *clauses])
+            rows = connection.execute(
+                f"""
+                WITH filtered AS (
+                    SELECT {HOSPITAL_COLUMNS}, municipio_normalizado
+                    FROM staging_establishments WHERE {where}
+                ),
+                page AS (
+                    SELECT * FROM filtered
+                    ORDER BY {orders[order_by]} LIMIT ? OFFSET ?
+                ),
+                total AS (
+                    SELECT COUNT(*) AS total_available FROM filtered
+                )
+                SELECT page.*, total.total_available
+                FROM total LEFT JOIN page ON 1 = 1
+                """,
+                [selected, *params, limit, offset],
+            ).fetchall()
+        total = int(rows[0]["total_available"])
+        return [self._to_hospital(row) for row in rows if row["cnes"] is not None], total
 
     def explain_search_plans(self) -> dict[str, tuple[str, ...]]:
         municipality_sql, municipality_params = self._municipality_query(

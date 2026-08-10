@@ -85,7 +85,7 @@ async def test_legacy_and_official_servers_have_only_justified_response_differen
 
 
 @pytest.mark.asyncio
-async def test_legacy_and_official_servers_expose_the_same_six_tool_names(
+async def test_official_server_preserves_all_six_legacy_tool_names(
     tmp_path: Path,
 ) -> None:
     settings = Settings(database_path=tmp_path / "catalog.sqlite3")
@@ -93,4 +93,5 @@ async def test_legacy_and_official_servers_expose_the_same_six_tool_names(
     async with Client(create_mcp_server(settings=settings)) as client:
         official_names = [tool.name for tool in (await client.list_tools()).tools]
 
-    assert official_names == legacy_names
+    assert official_names[: len(legacy_names)] == legacy_names
+    assert len(official_names) > len(legacy_names)

@@ -89,6 +89,162 @@ class DownloadInstructionsOutput(ContractModel):
     apos_download: str
 
 
+class SourceOutput(ContractModel):
+    nome: str
+    status: str
+    campos_cobertos: list[str]
+    campos_derivados: list[str]
+    ultima_verificacao: str
+    observacoes: list[str]
+
+
+class SourceListOutput(ContractModel):
+    fontes: list[SourceOutput]
+
+
+class CompetenceListOutput(ContractModel):
+    fonte: str
+    competencias_disponiveis: list[str]
+    mais_recente: str | None
+    granularidade: str
+
+
+class RemoteFetchOutput(ContractModel):
+    filepath: str
+    lote_id: str | None
+    registros: int = Field(ge=0)
+    filtros_nativos: list[str]
+    filtros_locais: list[str]
+    fonte_usada: str
+    campos_nao_preenchidos: list[str]
+    campos_derivados: list[str]
+    cache: bool
+    etag: str | None
+
+
+class StructuredErrorOutput(ContractModel):
+    erro: str
+    causa: str
+    sugestao: str
+
+
+class BatchOutput(ContractModel):
+    lote_id: str
+    arquivo_fonte: str
+    fonte: str
+    competencia: str | None
+    filtros: dict[str, Any]
+    registros: int = Field(ge=0)
+    importado_em: str
+    ativo: bool
+
+
+class BatchListOutput(ContractModel):
+    lotes: list[BatchOutput]
+
+
+class ActiveBatchOutput(ContractModel):
+    lote_id: str
+    ativo: bool
+
+
+class PurgeOutput(ContractModel):
+    lote_id: str | None
+    itens_removidos: int = Field(ge=0)
+    bytes_liberados: int = Field(ge=0)
+
+
+class DatasetValidationOutput(ContractModel):
+    lote_id: str
+    total_registros: int = Field(ge=0)
+    campos_vazios: dict[str, int]
+    cnes_duplicados: int = Field(ge=0)
+    competencias: list[str]
+    competencias_mistas: bool
+    leitos_invalidos: int = Field(ge=0)
+    valido: bool
+
+
+class AggregatePointOutput(ContractModel):
+    grupo: str
+    valor: int | float
+
+
+class AggregateOutput(ContractModel):
+    group_by: str
+    metrica: str
+    lote_id: str | None
+    resultados: list[AggregatePointOutput]
+
+
+class TimeSeriesPointOutput(ContractModel):
+    competencia: str
+    estabelecimentos: int = Field(ge=0)
+    leitos_existentes: int = Field(ge=0)
+    leitos_sus: int = Field(ge=0)
+
+
+class TimeSeriesOutput(ContractModel):
+    chave: str
+    tipo_chave: str
+    de: str
+    ate: str
+    serie: list[TimeSeriesPointOutput]
+    avisos: list[str]
+
+
+class BedChangeOutput(ContractModel):
+    cnes: str
+    competencia_a: str | None = None
+    competencia_b: str | None = None
+    leitos_existentes_a: int = Field(ge=0)
+    leitos_existentes_b: int = Field(ge=0)
+    leitos_sus_a: int = Field(ge=0)
+    leitos_sus_b: int = Field(ge=0)
+
+
+class DiffOutput(ContractModel):
+    lote_a: str
+    lote_b: str
+    entraram: list[str]
+    sairam: list[str]
+    mudaram_leitos: list[BedChangeOutput]
+    avisos: list[str]
+
+
+class AdvancedFiltersInput(ContractModel):
+    uf: str | None = Field(default=None, pattern=r"^[A-Za-z]{2}$")
+    municipio: str | None = Field(default=None, min_length=1)
+    tipo_estabelecimento: str | None = Field(default=None, min_length=1)
+    natureza_juridica: str | None = Field(default=None, min_length=1)
+    gestao: str | None = Field(default=None, min_length=1)
+    convenio_sus: bool | None = None
+    min_leitos: int | None = Field(default=None, ge=0)
+    max_leitos: int | None = Field(default=None, ge=0)
+
+
+class AdvancedSearchOutput(ContractModel):
+    total_encontrados: int = Field(ge=0)
+    total_retornados: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1, le=500)
+    estabelecimentos: list[HospitalOutput]
+
+
+class NormalizeOutput(ContractModel):
+    filepath: str
+    origem: str
+    registros: int = Field(ge=0)
+    campos_nao_preenchidos: list[str]
+    campos_derivados: list[str]
+
+
+class ExportOutput(ContractModel):
+    filepath: str
+    formato: str
+    registros: int = Field(ge=0)
+
+
 def dump_contract(model: ContractModel) -> dict[str, Any]:
     """Serializa sem aliases implícitos ou valores não JSON."""
 

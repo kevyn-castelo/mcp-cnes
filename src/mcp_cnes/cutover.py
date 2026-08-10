@@ -266,9 +266,9 @@ async def run_stdio_smoke(
     try:
         async with Client(stdio_client(parameters), read_timeout_seconds=timeout_seconds) as client:
             listed = await client.list_tools(cache_mode="bypass")
-            listed_names = tuple(tool.name for tool in listed.tools)
-            if listed_names != EXPECTED_TOOL_NAMES:
-                failure = RuntimeError("Catálogo MCP divergiu das seis ferramentas aprovadas")
+            listed_by_name = {tool.name: tool for tool in listed.tools}
+            if not all(name in listed_by_name for name in EXPECTED_TOOL_NAMES):
+                failure = RuntimeError("Catálogo MCP perdeu ferramentas aprovadas")
             call_evidence: list[dict[str, str]] = []
             loaded_records: int | None = None
             for tool_name, arguments in calls:
@@ -316,7 +316,9 @@ async def run_stdio_smoke(
                                 "name": tool.name,
                                 "sha256": _schema_hash(tool.input_schema, tool.output_schema),
                             }
-                            for tool in listed.tools
+                            for tool in (
+                                listed_by_name[name] for name in EXPECTED_TOOL_NAMES
+                            )
                         ],
                         "import": {
                             "source_file": csv_path.name,

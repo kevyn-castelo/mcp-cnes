@@ -22,6 +22,21 @@ EXPECTED_NAMES = [
     "cnes_statistics",
     "cnes_download_instructions",
 ]
+EXPANSION_NAMES = [
+    "cnes_list_sources",
+    "cnes_list_competencias",
+    "cnes_fetch",
+    "cnes_validate_dataset",
+    "cnes_list_lotes",
+    "cnes_use_lote",
+    "cnes_purge",
+    "cnes_aggregate",
+    "cnes_timeseries",
+    "cnes_diff",
+    "cnes_search_advanced",
+    "cnes_normalize",
+    "cnes_export",
+]
 
 
 def canonical_hash(value: dict[str, Any]) -> str:
@@ -37,6 +52,11 @@ def result_text(result: Any) -> str:
 async def test_tool_catalog_matches_sdk_snapshot_and_has_valid_schemas() -> None:
     expected = json.loads(
         (FIXTURES / "contracts" / "sdk-tools.snapshot.json").read_text(encoding="utf-8")
+    )
+    expected_expansion = json.loads(
+        (FIXTURES / "contracts" / "sdk-expansion-tools.snapshot.json").read_text(
+            encoding="utf-8"
+        )
     )
 
     async with Client(create_mcp_server()) as client:
@@ -60,8 +80,8 @@ async def test_tool_catalog_matches_sdk_snapshot_and_has_valid_schemas() -> None
             }
         )
 
-    assert [tool.name for tool in listed.tools] == EXPECTED_NAMES
-    assert actual == expected
+    assert [tool.name for tool in listed.tools] == EXPECTED_NAMES + EXPANSION_NAMES
+    assert actual == expected + expected_expansion
 
 
 @pytest.mark.asyncio

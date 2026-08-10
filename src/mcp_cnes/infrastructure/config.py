@@ -82,6 +82,20 @@ class Settings:
     max_delay: float = 5.0
     max_retries: int = 3
     retry_delay: float = 10.0
+    remote_catalog_url: str = (
+        "https://dadosabertos.saude.gov.br/dataset/hospitais-e-leitos"
+    )
+    remote_download_host: str = "s3.sa-east-1.amazonaws.com"
+    remote_download_path_prefix: str = "/ckan.saude.gov.br/Leitos_SUS/"
+    remote_dir: Path = Path("downloads/remote")
+    remote_cache_dir: Path = Path("downloads/cache")
+    remote_cache_ttl_seconds: int = 86_400
+    remote_max_download_bytes: int = 100 * 1024 * 1024
+    remote_max_concurrency: int = 2
+    remote_user_agent: str = (
+        "mcp-cnes/0.1 (+https://github.com/kevyn-castelo/mcp-cnes)"
+    )
+    remote_backoff_base: float = 1.0
 
     def __post_init__(self) -> None:
         try:
@@ -99,6 +113,9 @@ class Settings:
             ("max_retries", self.max_retries),
             ("max_csv_size_bytes", self.max_csv_size_bytes),
             ("batch_retention_count", self.batch_retention_count),
+            ("remote_cache_ttl_seconds", self.remote_cache_ttl_seconds),
+            ("remote_max_download_bytes", self.remote_max_download_bytes),
+            ("remote_max_concurrency", self.remote_max_concurrency),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ConfigurationError(f"{name} deve ser um inteiro maior que zero")
@@ -106,6 +123,7 @@ class Settings:
             ("min_delay", self.min_delay),
             ("max_delay", self.max_delay),
             ("retry_delay", self.retry_delay),
+            ("remote_backoff_base", self.remote_backoff_base),
         ):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
                 raise ConfigurationError(f"{name} deve ser um número não negativo")
@@ -115,10 +133,17 @@ class Settings:
             ("base_url", self.base_url),
             ("kibana_api", self.kibana_api),
             ("dashboard_url", self.dashboard_url),
+            ("remote_catalog_url", self.remote_catalog_url),
         ):
             parsed = urlparse(value)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise ConfigurationError(f"{name} deve ser uma URL HTTP(S) válida")
+        if not re.fullmatch(r"[A-Za-z0-9.-]+", self.remote_download_host):
+            raise ConfigurationError("remote_download_host inválido")
+        if not self.remote_download_path_prefix.startswith("/"):
+            raise ConfigurationError("remote_download_path_prefix deve começar com /")
+        if not self.remote_user_agent.strip():
+            raise ConfigurationError("remote_user_agent não pode ser vazio")
         if not self.private_nature_codes:
             raise ConfigurationError("private_nature_codes não pode ser vazio")
         if not re.fullmatch(r"[A-Za-z0-9_.*,-]+", self.kibana_index):
@@ -157,6 +182,18 @@ class Settings:
             return tuple(part.strip() for part in raw.split(",") if part.strip()) if raw else default
 
         default = cls()
+        database_path = Path(
+            env.get("MCP_CNES_DATABASE_PATH", str(default.database_path))
+        )
+        remote_dir = Path(
+            env.get("MCP_CNES_REMOTE_DIR", str(database_path.parent / "remote"))
+        )
+        remote_cache_dir = Path(
+            env.get(
+                "MCP_CNES_REMOTE_CACHE_DIR",
+                str(database_path.parent / "cache"),
+            )
+        )
         cities: Mapping[str, tuple[str, ...]] = default.target_cities
         if raw_cities := env.get("MCP_CNES_TARGET_CITIES"):
             try:
@@ -178,9 +215,7 @@ class Settings:
                 "MCP_CNES_DIRECTOR_CBO_CODES", default.director_cbo_codes
             ),
             data_dir=Path(env.get("MCP_CNES_DATA_DIR", str(default.data_dir))),
-            database_path=Path(
-                env.get("MCP_CNES_DATABASE_PATH", str(default.database_path))
-            ),
+            database_path=database_path,
             max_csv_size_bytes=integer(
                 "MCP_CNES_MAX_CSV_SIZE_BYTES", default.max_csv_size_bytes
             ),
@@ -203,6 +238,36 @@ class Settings:
             max_delay=number("MCP_CNES_MAX_DELAY", default.max_delay),
             max_retries=integer("MCP_CNES_MAX_RETRIES", default.max_retries),
             retry_delay=number("MCP_CNES_RETRY_DELAY", default.retry_delay),
+            remote_catalog_url=env.get(
+                "MCP_CNES_REMOTE_CATALOG_URL", default.remote_catalog_url
+            ),
+            remote_download_host=env.get(
+                "MCP_CNES_REMOTE_DOWNLOAD_HOST", default.remote_download_host
+            ),
+            remote_download_path_prefix=env.get(
+                "MCP_CNES_REMOTE_DOWNLOAD_PATH_PREFIX",
+                default.remote_download_path_prefix,
+            ),
+            remote_dir=remote_dir,
+            remote_cache_dir=remote_cache_dir,
+            remote_cache_ttl_seconds=integer(
+                "MCP_CNES_REMOTE_CACHE_TTL_SECONDS",
+                default.remote_cache_ttl_seconds,
+            ),
+            remote_max_download_bytes=integer(
+                "MCP_CNES_REMOTE_MAX_DOWNLOAD_BYTES",
+                default.remote_max_download_bytes,
+            ),
+            remote_max_concurrency=integer(
+                "MCP_CNES_REMOTE_MAX_CONCURRENCY",
+                default.remote_max_concurrency,
+            ),
+            remote_user_agent=env.get(
+                "MCP_CNES_REMOTE_USER_AGENT", default.remote_user_agent
+            ),
+            remote_backoff_base=number(
+                "MCP_CNES_REMOTE_BACKOFF_BASE", default.remote_backoff_base
+            ),
         )
 
 

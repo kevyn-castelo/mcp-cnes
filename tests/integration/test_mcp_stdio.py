@@ -34,7 +34,16 @@ async def test_official_stdio_entrypoint_loads_and_queries_fixture(
             "cnes_search_municipio", {"municipio": "Manaus"}
         )
 
-    assert len(tools.tools) == 6
+    assert {tool.name for tool in tools.tools}.issuperset(
+        {
+            "cnes_load_data",
+            "cnes_search_municipio",
+            "cnes_search_cnes",
+            "cnes_search_uf",
+            "cnes_statistics",
+            "cnes_download_instructions",
+        }
+    )
     assert loaded.is_error is False
     assert loaded.structured_content["registros_carregados"] == 1
     assert result.is_error is False

@@ -133,13 +133,16 @@ class DiskHospitalSequence(Sequence[HospitalInfo]):
         position = index + len(self) if index < 0 else index
         if position < 0 or position >= len(self):
             raise IndexError(index)
-        with sqlite3.connect(self.path) as connection:
+        connection = sqlite3.connect(self.path)
+        try:
             connection.row_factory = sqlite3.Row
             row = connection.execute(
                 f"SELECT {HOSPITAL_SELECT} FROM hospitals "
                 "ORDER BY ordinal LIMIT 1 OFFSET ?",
                 (position,),
             ).fetchone()
+        finally:
+            connection.close()
         if row is None:
             raise IndexError(index)
         return self._to_hospital(row)
