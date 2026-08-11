@@ -58,7 +58,7 @@ jobs:
         run: uv sync --locked
 
       - name: Ruff
-        run: uv run ruff check src tests mcp_server.py benchmarks
+        run: uv run ruff check src tests benchmarks
 
       - name: Pyright
         run: uv run pyright
@@ -66,7 +66,6 @@ jobs:
       - name: Unit tests
         run: >-
           uv run pytest tests/unit -m "not live"
-          --ignore=tests/unit/test_contract_baseline.py
           --ignore=tests/unit/test_mcp_sdk_contract.py
 
       - name: Integration tests
@@ -74,8 +73,7 @@ jobs:
 
       - name: Contract tests
         run: >-
-          uv run pytest tests/unit/test_contract_baseline.py
-          tests/unit/test_mcp_sdk_contract.py tests/contract -m "not live"
+          uv run pytest tests/unit/test_mcp_sdk_contract.py -m "not live"
 
       - name: Coverage gate
         run: >-

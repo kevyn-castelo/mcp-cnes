@@ -1,20 +1,12 @@
-# Baseline de contrato legado
+# Fixtures de contrato do SDK MCP
 
-Estes arquivos congelam o comportamento observável antes da migração para o SDK
-MCP oficial:
+Estes arquivos congelam o catálogo e os schemas do SDK MCP oficial:
 
-- `tools.json`: nomes, descrições e schemas retornados por `get_tools()`.
-- `examples.json`: uma chamada representativa para cada uma das seis ferramentas.
-- `sdk-tools.snapshot.json`: resumo legível e hash do catálogo completo gerado
-  pelo SDK oficial, incluindo schemas de entrada e saída.
+- `sdk-tools.snapshot.json`: resumo legível e hash do catálogo completo,
+  incluindo schemas de entrada e saída.
+- `sdk-expansion-tools.snapshot.json`: snapshot das ferramentas adicionadas nas
+  expansões do contrato.
 
-`ultima_atualizacao` e `arquivo_fonte` são normalizados porque dependem do instante
-e do caminho de execução. Os demais campos são comparados integralmente. O F1
-atualizou intencionalmente o contrato para incluir filtros opcionais de leitos,
-contagens antes/depois do limite e o resumo da importação. Atualize as fixtures
-somente quando a mudança de contrato for intencional e revisada.
-
-O F3 preservou os seis nomes e introduziu deliberadamente `outputSchema`,
-`additionalProperties: false`, limites tipados e erros MCP com `isError: true`.
-O conteúdo textual JSON continua presente ao lado de `structuredContent` para a
-janela de compatibilidade.
+Atualize os snapshots somente quando a mudança de contrato for intencional e
+revisada. O teste `tests/unit/test_mcp_sdk_contract.py` valida nomes, schemas,
+hashes, resposta estruturada, modo legado e os seis fluxos históricos.

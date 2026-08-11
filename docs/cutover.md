@@ -9,10 +9,10 @@ não é um rollback válido para clientes oficiais.
 1. Execute `uv sync --locked` em um checkout limpo.
 2. Configure `MCP_CNES_DATA_DIR` e `MCP_CNES_DATABASE_PATH` para diretórios
    autorizados. Use `.env.example` como referência, sem versionar dados ou segredos.
-3. Execute a suíte de paridade:
+3. Execute a suíte de contrato do SDK oficial:
 
    ```powershell
-   uv run pytest tests/contract/test_cutover_parity.py
+   uv run pytest tests/unit/test_mcp_sdk_contract.py tests/contract -m "not live"
    ```
 
 4. Registre a revisão exata que será validada:

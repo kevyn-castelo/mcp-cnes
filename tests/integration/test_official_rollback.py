@@ -99,7 +99,6 @@ def test_runbook_does_not_present_the_manual_server_as_mcp_rollback() -> None:
     runbook = (ROOT / "docs" / "cutover.md").read_text(encoding="utf-8")
     rollback_section = runbook.split("## 4. Preparar e ensaiar o rollback oficial", 1)[1]
 
-    assert "uv run python mcp_server.py" not in runbook
     assert "last-known-good" in runbook
     assert '"mcp-cnes"' in rollback_section
     assert "MCP_CNES_DATA_DIR" in rollback_section
