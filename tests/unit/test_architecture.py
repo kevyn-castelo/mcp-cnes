@@ -105,8 +105,6 @@ asyncio.run = forbidden
 import mcp_cnes
 for module in pkgutil.walk_packages(mcp_cnes.__path__, mcp_cnes.__name__ + '.'):
     importlib.import_module(module.name)
-for name in ('clean_leads',):
-    importlib.import_module(name)
 """
     project_root = PACKAGE_ROOT.parents[1]
     environment = dict(os.environ)
