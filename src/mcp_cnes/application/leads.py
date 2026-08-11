@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from mcp_cnes.domain.errors import DomainValidationError
+
 from .analytics import _validate_filters
 from .ports import CNESColumnarRepository
 from .remote import validate_competence
@@ -22,7 +24,7 @@ class GroupByMaintainer:
     ) -> dict[str, Any]:
         _validate_filters(filters)
         if isinstance(limit, bool) or not 1 <= limit <= 500:
-            raise ValueError("limit deve estar entre 1 e 500")
+            raise DomainValidationError("limit deve estar entre 1 e 500")
         return self._repository.group_by_maintainer(filters, limit, batch_id)
 
 
@@ -42,9 +44,9 @@ class LeadTriggers:
         validate_competence(competence_a)
         validate_competence(competence_b)
         if competence_a >= competence_b:
-            raise ValueError("competencia_a deve ser anterior a competencia_b")
+            raise DomainValidationError("competencia_a deve ser anterior a competencia_b")
         if isinstance(delta_min, bool) or delta_min < 1:
-            raise ValueError("delta_min deve ser um inteiro maior que zero")
+            raise DomainValidationError("delta_min deve ser um inteiro maior que zero")
         return self._repository.lead_triggers(
             competence_a,
             competence_b,
@@ -74,19 +76,21 @@ class ScoreLeads:
         validate_competence(competence_a)
         validate_competence(competence_b)
         if competence_a >= competence_b:
-            raise ValueError("competencia_a deve ser anterior a competencia_b")
+            raise DomainValidationError("competencia_a deve ser anterior a competencia_b")
         if set(weights) != self.WEIGHT_NAMES:
-            raise ValueError("pesos deve informar porte, complexidade, mix_pagador e tendencia")
+            raise DomainValidationError(
+                "pesos deve informar porte, complexidade, mix_pagador e tendencia"
+            )
         if any(
             isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0
             for value in weights.values()
         ):
-            raise ValueError("pesos devem ser números não negativos")
+            raise DomainValidationError("pesos devem ser números não negativos")
         if sum(weights.values()) <= 0:
-            raise ValueError("ao menos um peso deve ser maior que zero")
+            raise DomainValidationError("ao menos um peso deve ser maior que zero")
         _validate_filters(filters)
         if isinstance(limit, bool) or not 1 <= limit <= 500:
-            raise ValueError("limit deve estar entre 1 e 500")
+            raise DomainValidationError("limit deve estar entre 1 e 500")
         return self._repository.score_leads(
             competence_a, competence_b, weights, filters, limit, batch_a, batch_b
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
+from mcp_cnes.domain.errors import DomainValidationError
 from mcp_cnes.domain.models import LoadSummary
 from mcp_cnes.domain.remote import (
     RemoteCompetenceResult,
@@ -22,7 +23,7 @@ def validate_competence(value: str) -> str:
     """Valida uma competência mensal no formato YYYYMM."""
 
     if len(value) != 6 or not value.isdigit() or not 1 <= int(value[4:]) <= 12:
-        raise ValueError("competencia deve usar o formato YYYYMM com mês válido")
+        raise DomainValidationError("competencia deve usar o formato YYYYMM com mês válido")
     return value
 
 
@@ -79,7 +80,7 @@ class FetchRemoteData:
         if normalized_uf is not None and (
             len(normalized_uf) != 2 or not normalized_uf.isalpha()
         ):
-            raise ValueError("uf deve conter exatamente duas letras")
+            raise DomainValidationError("uf deve conter exatamente duas letras")
         request = RemoteFetchRequest(
             competence=competence,
             uf=normalized_uf,
@@ -109,7 +110,7 @@ class FetchRemoteData:
         if fetched.contract_version == "v2":
             register = getattr(self._repository, "register_parquet_batch", None)
             if not callable(register):
-                raise ValueError("A fonte v2 requer o backend colunar DuckDB")
+                raise DomainValidationError("A fonte v2 requer o backend colunar DuckDB")
             batch_id = cast(str, register(
                 fetched.filepath,
                 source_file=fetched.filepath.name,
@@ -123,7 +124,7 @@ class FetchRemoteData:
             ))
             return RemoteLoadResult(fetched, batch_id)
         if self._loader is None:
-            raise ValueError("auto_load requer um carregador configurado")
+            raise DomainValidationError("auto_load requer um carregador configurado")
         summary: LoadSummary = self._loader.execute(
             fetched.filepath,
             source=fetched.source,

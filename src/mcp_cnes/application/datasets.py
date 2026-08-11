@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from mcp_cnes.domain.errors import DomainValidationError
 from mcp_cnes.domain.models import HospitalInfo
 
 from .analytics import AdvancedSearch, _validate_filters
@@ -39,7 +40,7 @@ class NormalizeData:
     ) -> NormalizeResult:
         normalized_origin = origin.casefold()
         if normalized_origin not in self.SUPPORTED_ORIGINS:
-            raise ValueError(
+            raise DomainValidationError(
                 "origem suportada: auto, csv_canonico ou portal_sus já extraído em CSV"
             )
         batch = self._importer.import_file(filepath)
@@ -103,25 +104,27 @@ class ExportData:
     ) -> DatasetFileResult:
         _validate_filters(filters)
         if isinstance(offset, bool) or offset < 0:
-            raise ValueError("offset deve ser um inteiro não negativo")
+            raise DomainValidationError("offset deve ser um inteiro não negativo")
         if limit is not None and (
             isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500
         ):
-            raise ValueError("limit deve estar entre 1 e 500")
+            raise DomainValidationError("limit deve estar entre 1 e 500")
         selected_cnes: list[str] | None = None
         if cnes_list is not None:
             selected_cnes = list(dict.fromkeys(cnes_list))
             invalid = [value for value in selected_cnes if len(value) != 7 or not value.isdigit()]
             if invalid:
-                raise ValueError("cnes_list aceita somente códigos CNES de sete dígitos")
+                raise DomainValidationError(
+                    "cnes_list aceita somente códigos CNES de sete dígitos"
+                )
             if not selected_cnes:
-                raise ValueError("cnes_list não pode ser vazia")
+                raise DomainValidationError("cnes_list não pode ser vazia")
         effective_filters = dict(filters)
         if selected_cnes is not None:
             effective_filters["cnes_list"] = selected_cnes
         search = AdvancedSearch(self._repository)
         if output_profile not in {None, "crm_generico"}:
-            raise ValueError("perfil_saida deve ser crm_generico ou nulo")
+            raise DomainValidationError("perfil_saida deve ser crm_generico ou nulo")
 
         batch_metadata = dict(self._repository.get_batch_metadata(batch_id))
         effective_batch_id = str(batch_metadata["lote_id"])
@@ -144,7 +147,9 @@ class ExportData:
                 else:
                     advanced_search_v2 = getattr(self._repository, "advanced_search_v2", None)
                     if not callable(advanced_search_v2):
-                        raise ValueError("perfil CRM requer o backend colunar e um lote v2")
+                        raise DomainValidationError(
+                            "perfil CRM requer o backend colunar e um lote v2"
+                        )
                     search_v2 = cast(
                         Callable[..., tuple[Sequence[HospitalInfo], int]],
                         advanced_search_v2,

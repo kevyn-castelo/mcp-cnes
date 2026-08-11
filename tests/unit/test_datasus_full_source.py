@@ -10,6 +10,7 @@ import duckdb
 import pytest
 from mcp import Client
 
+from mcp_cnes.domain.errors import CollectorError
 from mcp_cnes.domain.remote import RemoteFetchRequest
 from mcp_cnes.infrastructure.config import Settings
 from mcp_cnes.infrastructure.sources import DatasusFullRemoteSource
@@ -244,6 +245,48 @@ def test_full_source_purge_removes_download_and_normalized_cache(tmp_path: Path)
     assert released > 0
     assert result.filepath.exists() is False
     assert list(configured.remote_cache_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "destination_factory",
+    [
+        lambda configured, tmp_path: tmp_path / "outside",
+        lambda configured, tmp_path: Path(".."),
+    ],
+    ids=["absolute", "parent-traversal"],
+)
+def test_full_source_rejects_destination_outside_remote_root(
+    tmp_path: Path, destination_factory
+) -> None:
+    configured = settings(tmp_path)
+    source = DatasusFullRemoteSource(configured, ftp_factory=FakeFTP)
+
+    with pytest.raises(CollectorError, match="diretório remoto configurado") as raised:
+        source.fetch(
+            RemoteFetchRequest(COMPETENCE),
+            destination_factory(configured, tmp_path),
+        )
+
+    assert raised.value.code == "remote_destination_not_allowed"
+    assert not (tmp_path / "outside").exists()
+
+
+def test_full_source_rejects_symlink_escape_from_remote_root(tmp_path: Path) -> None:
+    configured = settings(tmp_path)
+    configured.remote_dir.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = configured.remote_dir / "escape"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink indisponível neste ambiente: {exc}")
+    source = DatasusFullRemoteSource(configured, ftp_factory=FakeFTP)
+
+    with pytest.raises(CollectorError, match="diretório remoto configurado") as raised:
+        source.fetch(RemoteFetchRequest(COMPETENCE), Path("escape"))
+
+    assert raised.value.code == "remote_destination_not_allowed"
 
 
 def test_full_source_marks_out_of_state_coordinate_without_dropping_values(

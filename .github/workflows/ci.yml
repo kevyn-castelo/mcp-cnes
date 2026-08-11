@@ -28,9 +28,9 @@ jobs:
           python-version: "3.11"
           enable-cache: true
 
-      - name: Export locked runtime requirements
+      - name: Export all locked requirements
         run: >-
-          uv export --locked --no-dev --no-editable --no-emit-project
+          uv export --locked --all-groups --no-editable --no-emit-project
           --format requirements.txt --output-file "$RUNNER_TEMP/requirements.txt"
 
       - name: Audit dependencies with pip-audit
@@ -38,6 +38,21 @@ jobs:
           uvx --from "pip-audit==2.10.1" pip-audit
           --requirement "$RUNNER_TEMP/requirements.txt"
           --format json --progress-spinner off
+
+  dependency-review:
+    name: Review dependency changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Reject newly introduced high-severity vulnerabilities
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: never
 
   quality:
     name: Ruff, Pyright and pytest

@@ -426,7 +426,7 @@ async def test_p2_tools_and_crm_jsonl_export(tmp_path: Path) -> None:
 
     rows = [
         json.loads(line)
-        for line in Path(exported.structured_content["filepath"])
+        for line in (output_dir / exported.structured_content["filepath"])
         .read_text(encoding="utf-8")
         .splitlines()
     ]

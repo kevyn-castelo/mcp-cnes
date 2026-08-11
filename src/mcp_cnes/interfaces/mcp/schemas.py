@@ -143,7 +143,9 @@ class CompetenceListOutput(ContractModel):
 
 
 class RemoteFetchOutput(ContractModel):
-    filepath: str
+    filepath: str = Field(
+        description="Referência relativa ao diretório remoto configurado"
+    )
     lote_id: str | None
     registros: int = Field(ge=0)
     filtros_nativos: list[str]
@@ -361,7 +363,9 @@ class LeadScoresOutput(ContractModel):
 
 
 class NormalizeOutput(ContractModel):
-    filepath: str
+    filepath: str = Field(
+        description="Referência relativa ao diretório de exportação configurado"
+    )
     origem: str
     registros: int = Field(ge=0)
     campos_nao_preenchidos: list[str]
@@ -369,7 +373,9 @@ class NormalizeOutput(ContractModel):
 
 
 class ExportOutput(ContractModel):
-    filepath: str
+    filepath: str = Field(
+        description="Referência relativa ao diretório de exportação configurado"
+    )
     formato: str
     registros: int = Field(ge=0)
 

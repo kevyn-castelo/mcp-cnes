@@ -41,3 +41,18 @@ Testes autorizados são bem-vindos quando não envolvem destruição de dados,
 negação de serviço, exfiltração de dados de terceiros ou persistência no
 ambiente. Pare os testes assim que houver acesso a dados que não pertencem ao
 pesquisador e reporte o achado de forma privada.
+
+## Operação segura
+
+- Mantenha `MCP_CNES_ALLOW_PURGE=false` em clientes de consulta. Habilite a
+  exclusão apenas em uma sessão administrativa supervisionada e encerre essa
+  sessão após a manutenção.
+- Trate `downloads`, bancos, caches e exportações como dados locais. Restrinja as
+  permissões desses diretórios ao usuário do processo e nunca os publique como
+  artefatos de CI.
+- Não exponha o transporte `stdio` diretamente na rede. Qualquer gateway remoto
+  deve acrescentar autenticação, autorização, TLS, limites de requisição e logs
+  de auditoria.
+- Configure no GitHub a proteção da branch `main`, Secret Protection, push
+  protection e os checks obrigatórios de CI e CodeQL antes de tornar o
+  repositório público.

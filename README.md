@@ -178,7 +178,7 @@ processo.
 | `MCP_CNES_DATA_DIR` | `downloads` | Diretório autorizado para importações CSV manuais |
 | `MCP_CNES_COLUMNAR_DATABASE_PATH` | `downloads/cnes.duckdb` | Banco de consultas colunares |
 | `MCP_CNES_COLUMNAR_DIR` | `downloads/parquet` | Lotes imutáveis em Parquet |
-| `MCP_CNES_OUTPUT_DIR` | `.` | Destino permitido para exports |
+| `MCP_CNES_OUTPUT_DIR` | `downloads/exports` | Destino permitido para exports |
 | `MCP_CNES_REMOTE_DIR` | `downloads/remote` | Artefatos baixados das fontes oficiais |
 | `MCP_CNES_REMOTE_CACHE_DIR` | `downloads/cache` | Índices e metadados de cache |
 | `MCP_CNES_BATCH_RETENTION_COUNT` | `5` | Quantidade de lotes concluídos retidos |
@@ -309,6 +309,8 @@ suporta o perfil CRM baseado em `v2`.
 Inputs e outputs possuem JSON Schema. Parâmetros extras são rejeitados, CNES exige
 sete dígitos, UF exige duas letras e `limit` aceita valores de 1 a 500. Falhas
 recuperáveis são retornadas ao cliente como erro MCP, não como sucesso vazio.
+Referências de arquivos em respostas são relativas aos diretórios configurados;
+o servidor não divulga caminhos absolutos do host.
 
 ## Exportar para CRM
 
@@ -333,7 +335,9 @@ do contrato.
   ainda abertos.
 - A base completa mantém Parquets imutáveis por lote e consulta os dados com
   DuckDB.
-- `cnes_purge` remove caches e lotes conforme o escopo informado pela ferramenta.
+- `cnes_purge` fica desabilitado por padrão. O operador precisa iniciar o servidor
+  com `MCP_CNES_ALLOW_PURGE=true` e cada chamada deve informar `confirmacao` como
+  `EXCLUIR_LOTE:<lote_id>` ou `LIMPAR_CACHE`.
 - Não apague manualmente um banco ou Parquet enquanto o servidor estiver em uso.
 
 Consulte [docs/data-retention.md](docs/data-retention.md) para a política mínima de

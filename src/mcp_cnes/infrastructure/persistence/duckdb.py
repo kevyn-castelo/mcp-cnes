@@ -17,6 +17,7 @@ from typing import Any, cast
 import duckdb
 import pandas as pd
 
+from mcp_cnes.domain.errors import BatchNotFoundError
 from mcp_cnes.domain.identity import canonical_hospital_digest, contextual_batch_digest
 from mcp_cnes.domain.models import HospitalInfo, HospitalInfoV2, LoadSummary
 from mcp_cnes.domain.rules import normalize_search_text
@@ -419,7 +420,7 @@ class DuckDBCNESRepository:
             row = cursor.fetchone()
             names = [item[0] for item in cursor.description]
         if row is None:
-            raise ValueError(f"Lote inexistente: {selected}")
+            raise BatchNotFoundError(f"Lote inexistente: {selected}")
         result = dict(zip(names, row, strict=True))
         result["parquet_path"] = str(self._safe_parquet_path(result["parquet_path"]))
         return result

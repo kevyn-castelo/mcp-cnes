@@ -1,6 +1,11 @@
 """Entidades, regras puras e erros do domínio CNES."""
 
-from .errors import CNESDataLoadError, ConfigurationError, DomainValidationError
+from .errors import (
+    BatchNotFoundError,
+    CNESDataLoadError,
+    ConfigurationError,
+    DomainValidationError,
+)
 from .models import HospitalInfo, ImportBatch, LoadSummary
 from .rules import (
     is_within_bed_range,
@@ -11,6 +16,7 @@ from .rules import (
 )
 
 __all__ = [
+    "BatchNotFoundError",
     "CNESDataLoadError",
     "ConfigurationError",
     "DomainValidationError",

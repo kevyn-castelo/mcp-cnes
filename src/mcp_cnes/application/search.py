@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mcp_cnes.domain.errors import DomainValidationError
 from mcp_cnes.domain.models import HospitalInfo
 from mcp_cnes.domain.rules import validate_bed_range
 
@@ -13,7 +14,7 @@ from .ports import CNESCatalogRepository, CNESRepository
 
 def _validate_limit(limit: int) -> int:
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
-        raise ValueError("limit deve ser um inteiro maior que zero")
+        raise DomainValidationError("limit deve ser um inteiro maior que zero")
     return limit
 
 
