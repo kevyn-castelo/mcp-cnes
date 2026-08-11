@@ -303,6 +303,71 @@ def test_invalid_sus_bed_total_invalidates_dataset_and_mix(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_missing_commercial_fields_are_not_treated_as_zero(tmp_path: Path) -> None:
+    repository = DuckDBCNESRepository(
+        tmp_path / "cnes.duckdb", columnar_dir=tmp_path / "parquet"
+    )
+    prior = hospital("0000001", "202501", 0, 0, 0, "11111111000100")
+    prior.campos_ausentes = ("leitos_existentes", "leitos_sus")
+    current = hospital("0000001", "202502", 100, 0, 10, "11111111000100")
+    current.campos_ausentes = ("leitos_sus",)
+    without_maintainer = hospital("0000002", "202502", 20, 10, 0, "")
+    left = register_batch(repository, tmp_path, "202501", [prior])
+    right = register_batch(
+        repository, tmp_path, "202502", [current, without_maintainer]
+    )
+
+    validation = repository.validate_dataset(right)
+    triggers = repository.lead_triggers("202501", "202502", 50, batch_a=left, batch_b=right)
+    grouping = repository.group_by_maintainer({}, 10, right)
+    group = grouping["redes"][0]
+
+    assert validation["leitos_ausentes"] == 1
+    assert validation["valido"] is False
+    assert triggers["gatilhos"] == []
+    assert "1 estabelecimento(s) omitido(s)" in triggers["avisos"][0]
+    assert grouping["unidades_sem_cnpj_mantenedora"] == 1
+    assert group["leitos_existentes"] == 100
+    assert group["leitos_sus"] is None
+    assert group["mix_sus"] is None
+    assert "leitos_sus" in group["campos_ausentes"]
+
+    server = create_mcp_server(
+        settings=Settings(
+            database_path=tmp_path / "unused.sqlite3",
+            output_dir=tmp_path / "exports",
+        ),
+        repository=repository,
+    )
+    async with Client(server) as client:
+        validated = await client.call_tool("cnes_validate_dataset", {"lote_id": right})
+        grouped = await client.call_tool("cnes_group_by_mantenedora", {"lote_id": right})
+        scored = await client.call_tool(
+            "cnes_score_leads",
+            {
+                "competencia_a": "202501",
+                "competencia_b": "202502",
+                "lote_a": left,
+                "lote_b": right,
+                "pesos": {
+                    "porte": 1,
+                    "complexidade": 1,
+                    "mix_pagador": 1,
+                    "tendencia": 1,
+                },
+            },
+        )
+
+    assert validated.structured_content["leitos_ausentes"] == 1
+    assert validated.structured_content["valido"] is False
+    assert grouped.is_error is False
+    assert grouped.structured_content["unidades_sem_cnpj_mantenedora"] == 1
+    assert "1 unidade(s) sem CNPJ" in grouped.structured_content["avisos"][1]
+    assert scored.is_error is False
+    assert "leitos_sus" in scored.structured_content["campos_ausentes"]
+
+
+@pytest.mark.asyncio
 async def test_p2_tools_and_crm_jsonl_export(tmp_path: Path) -> None:
     repository = prepared_repository(tmp_path)
     output_dir = tmp_path / "exports"

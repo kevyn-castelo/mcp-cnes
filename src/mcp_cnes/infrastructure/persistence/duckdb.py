@@ -752,12 +752,16 @@ class DuckDBCNESRepository:
                 ).fetchall()
             ]
             invalid_row = connection.execute(
-                "SELECT COUNT(*) FROM read_parquet(?) WHERE leitos_existentes < 0 "
-                "OR leitos_sus < 0 OR leitos_sus > leitos_existentes",
+                "SELECT COUNT(*) FILTER (WHERE leitos_existentes < 0 OR leitos_sus < 0 "
+                "OR leitos_sus > leitos_existentes), COUNT(*) FILTER (WHERE "
+                "list_contains(CAST(campos_ausentes AS VARCHAR[]), 'leitos_existentes') "
+                "OR list_contains(CAST(campos_ausentes AS VARCHAR[]), 'leitos_sus')) "
+                "FROM read_parquet(?)",
                 [batch["parquet_path"]],
             ).fetchone()
             assert invalid_row is not None
             invalid = int(invalid_row[0])
+            missing = int(invalid_row[1])
         total = int(batch["accepted_count"])
         return {
             "lote_id": batch["id"],
@@ -767,7 +771,8 @@ class DuckDBCNESRepository:
             "competencias": competences,
             "competencias_mistas": len(competences) > 1,
             "leitos_invalidos": invalid,
-            "valido": total > 0 and duplicates == 0 and invalid == 0,
+            "leitos_ausentes": missing,
+            "valido": total > 0 and duplicates == 0 and invalid == 0 and missing == 0,
         }
 
     def aggregate(
@@ -927,17 +932,29 @@ class DuckDBCNESRepository:
         if batch["contract_version"] != "v2":
             raise ValueError("Agrupamento por mantenedora requer um lote v2")
         clauses, params = self._filters(filters)
+        missing_clauses = [*clauses, "COALESCE(trim(cnpj_mantenedora), '') = ''"]
+        missing_where = " WHERE " + " AND ".join(missing_clauses)
         clauses.append("COALESCE(trim(cnpj_mantenedora), '') <> ''")
         where = " WHERE " + " AND ".join(clauses)
         with duckdb.connect() as connection:
+            missing_row = connection.execute(
+                f"SELECT COUNT(*) FROM read_parquet(?) {missing_where}",
+                [batch["parquet_path"], *params],
+            ).fetchone()
+            assert missing_row is not None
             cursor = connection.execute(
                 f"""
                 WITH filtered AS (
                     SELECT * FROM read_parquet(?) {where}
                 ), ranked AS (
                     SELECT cnpj_mantenedora, COUNT(*) AS unidades,
-                           SUM(leitos_existentes) AS leitos_existentes,
-                           SUM(leitos_sus) AS leitos_sus
+                           CASE WHEN COUNT(*) FILTER (WHERE list_contains(
+                               CAST(campos_ausentes AS VARCHAR[]), 'leitos_existentes'
+                           )) > 0 THEN NULL ELSE SUM(leitos_existentes) END
+                               AS leitos_existentes,
+                           CASE WHEN COUNT(*) FILTER (WHERE list_contains(
+                               CAST(campos_ausentes AS VARCHAR[]), 'leitos_sus'
+                           )) > 0 THEN NULL ELSE SUM(leitos_sus) END AS leitos_sus
                     FROM filtered GROUP BY cnpj_mantenedora
                     ORDER BY unidades DESC, leitos_existentes DESC, cnpj_mantenedora
                     LIMIT ?
@@ -955,14 +972,33 @@ class DuckDBCNESRepository:
         grouped: dict[str, dict[str, Any]] = {}
         for row in rows:
             cnpj = str(row["cnpj_mantenedora"])
-            total_beds = int(row["leitos_existentes"])
-            sus_beds = int(row["leitos_sus"])
-            valid_mix = total_beds > 0 and 0 <= sus_beds <= total_beds
+            total_beds = (
+                int(row["leitos_existentes"])
+                if row["leitos_existentes"] is not None
+                else None
+            )
+            sus_beds = int(row["leitos_sus"]) if row["leitos_sus"] is not None else None
+            valid_mix = (
+                total_beds is not None
+                and sus_beds is not None
+                and total_beds > 0
+                and 0 <= sus_beds <= total_beds
+            )
+            mix_sus = (
+                round(sus_beds / total_beds, 6)
+                if valid_mix and sus_beds is not None and total_beds is not None
+                else None
+            )
             alerts = (
                 ["leitos_sus_maior_que_leitos_existentes"]
-                if sus_beds > total_beds
+                if total_beds is not None and sus_beds is not None and sus_beds > total_beds
                 else []
             )
+            missing_fields = ["nome_mantenedora"]
+            if total_beds is None:
+                missing_fields.append("leitos_existentes")
+            if sus_beds is None:
+                missing_fields.append("leitos_sus")
             item = grouped.setdefault(
                 cnpj,
                 {
@@ -971,15 +1007,19 @@ class DuckDBCNESRepository:
                     "unidades": int(row["unidades"]),
                     "leitos_existentes": total_beds,
                     "leitos_sus": sus_beds,
-                    "mix_sus": round(sus_beds / total_beds, 6) if valid_mix else None,
-                    "mix_nao_sus": round(1 - sus_beds / total_beds, 6) if valid_mix else None,
+                    "mix_sus": mix_sus,
+                    "mix_nao_sus": round(1 - mix_sus, 6) if mix_sus is not None else None,
                     "distribuicao_uf": {},
-                    "campos_ausentes": ["nome_mantenedora"],
+                    "campos_ausentes": missing_fields,
                     "alertas": alerts,
                 },
             )
             item["distribuicao_uf"][str(row["uf"])] = int(row["unidades_uf"])
-        return {"lote_id": str(batch["id"]), "redes": list(grouped.values())}
+        return {
+            "lote_id": str(batch["id"]),
+            "unidades_sem_cnpj_mantenedora": int(missing_row[0]),
+            "redes": list(grouped.values()),
+        }
 
     def lead_triggers(
         self,
@@ -1008,13 +1048,15 @@ class DuckDBCNESRepository:
                 f"""
                 WITH a AS (
                     SELECT cnes, nome_fantasia, tipo_estabelecimento,
-                           leitos_existentes, leitos_sus
+                           leitos_existentes, leitos_sus,
+                           CAST(campos_ausentes AS VARCHAR[]) AS campos_ausentes
                     FROM read_parquet(?)
                 ), b AS (
                     SELECT cnes, nome_fantasia, tipo_estabelecimento,
-                           leitos_existentes, leitos_sus
+                           leitos_existentes, leitos_sus,
+                           CAST(campos_ausentes AS VARCHAR[]) AS campos_ausentes
                     FROM read_parquet(?)
-                ), compared AS (
+                ), compared_base AS (
                     SELECT
                         COALESCE(b.cnes, a.cnes) AS cnes,
                         COALESCE(b.nome_fantasia, a.nome_fantasia) AS nome_fantasia,
@@ -1024,25 +1066,43 @@ class DuckDBCNESRepository:
                         b.leitos_existentes AS leitos_existentes_b,
                         a.leitos_sus AS leitos_sus_a,
                         b.leitos_sus AS leitos_sus_b,
-                        COALESCE(b.leitos_existentes, 0)
-                            - COALESCE(a.leitos_existentes, 0) AS delta_leitos,
-                        CASE
-                            WHEN a.cnes IS NULL THEN 'entrada'
-                            WHEN b.cnes IS NULL THEN 'saida'
-                            WHEN b.leitos_existentes > a.leitos_existentes THEN 'expansao'
-                            WHEN b.leitos_existentes < a.leitos_existentes THEN 'retracao'
-                        END AS motivo
+                        (a.cnes IS NOT NULL AND COALESCE(list_contains(
+                            a.campos_ausentes, 'leitos_existentes'
+                        ), false)) OR (b.cnes IS NOT NULL AND COALESCE(list_contains(
+                            b.campos_ausentes, 'leitos_existentes'
+                        ), false)) AS leitos_ausentes
                     FROM a FULL OUTER JOIN b USING (cnes)
                     WHERE 1=1 {type_clause}
+                ), compared AS (
+                    SELECT *,
+                        CASE WHEN NOT leitos_ausentes THEN
+                            COALESCE(leitos_existentes_b, 0)
+                                - COALESCE(leitos_existentes_a, 0)
+                        END AS delta_leitos,
+                        CASE
+                            WHEN leitos_ausentes THEN NULL
+                            WHEN leitos_existentes_a IS NULL THEN 'entrada'
+                            WHEN leitos_existentes_b IS NULL THEN 'saida'
+                            WHEN leitos_existentes_b > leitos_existentes_a THEN 'expansao'
+                            WHEN leitos_existentes_b < leitos_existentes_a THEN 'retracao'
+                        END AS motivo
+                    FROM compared_base
                 )
                 SELECT * FROM compared
-                WHERE motivo IS NOT NULL AND abs(delta_leitos) >= ?
+                WHERE leitos_ausentes OR (motivo IS NOT NULL AND abs(delta_leitos) >= ?)
                 ORDER BY abs(delta_leitos) DESC, cnes
                 """,
                 params,
             )
-            triggers = self._dict_rows(cursor)
+            rows = self._dict_rows(cursor)
+        omitted = sum(bool(row.pop("leitos_ausentes")) for row in rows)
+        triggers = [row for row in rows if row["motivo"] is not None]
         warnings = []
+        if omitted:
+            warnings.append(
+                f"{omitted} estabelecimento(s) omitido(s) porque leitos_existentes "
+                "está ausente em ao menos uma competência."
+            )
         if left["filters_json"] != right["filters_json"]:
             warnings.append(
                 "Os lotes possuem filtros de origem diferentes; entrada e saída podem "

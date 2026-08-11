@@ -26,7 +26,7 @@ from mcp_cnes.domain import (
     validate_bed_range,
 )
 from mcp_cnes.infrastructure.config import Settings, load_settings
-from mcp_cnes.infrastructure.importers import CsvCNESImporter
+from mcp_cnes.infrastructure.importers import CsvCNESImporter, SecureCsvImporter
 from mcp_cnes.infrastructure.persistence import MemoryCNESRepository
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,15 @@ class MCPServer:
         self.settings = settings or load_settings()
         self.data_store = CNESDataStore()
         self.downloads_dir = self.settings.data_dir
-        self._load_data = LoadData(self.data_store, CsvCNESImporter())
+        self._load_data = LoadData(
+            self.data_store,
+            SecureCsvImporter(
+                CsvCNESImporter(),
+                self.settings.data_dir,
+                self.settings.max_csv_size_bytes,
+                self.settings.allowed_csv_files,
+            ),
+        )
         self._search_municipality = SearchByMunicipality(self.data_store)
         self._search_cnes = SearchByCNES(self.data_store)
         self._search_uf = SearchByUF(self.data_store)

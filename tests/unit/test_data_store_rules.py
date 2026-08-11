@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from mcp_cnes.infrastructure.config import Settings
 from mcp_server import CNESDataLoadError, CNESDataStore, HospitalInfo, MCPServer
 
 CSV_FIXTURES = Path(__file__).parents[1] / "fixtures" / "csv"
@@ -85,7 +86,12 @@ def test_granular_rows_are_consolidated_and_exact_duplicates_ignored() -> None:
 
 @pytest.mark.asyncio
 async def test_load_tool_reports_failure_without_losing_previous_data() -> None:
-    server = MCPServer()
+    server = MCPServer(
+        settings=Settings(
+            data_dir=CSV_FIXTURES,
+            allowed_csv_files=("valid.csv", "invalid.csv"),
+        )
+    )
     valid = await server.call_tool(
         "cnes_load_data", {"filepath": str(CSV_FIXTURES / "valid.csv")}
     )
@@ -97,3 +103,17 @@ async def test_load_tool_reports_failure_without_losing_previous_data() -> None:
     assert valid["success"] is True
     assert invalid == {"success": False, "error": "CSV sem coluna CNES"}
     assert server.data_store.hospitals[0].cnes == "1234567"
+
+
+@pytest.mark.asyncio
+async def test_load_tool_rejects_csv_outside_configured_data_dir() -> None:
+    server = MCPServer(settings=Settings(data_dir=CSV_FIXTURES / "allowed"))
+
+    result = await server.call_tool(
+        "cnes_load_data", {"filepath": str(CSV_FIXTURES / "valid.csv")}
+    )
+
+    assert result == {
+        "success": False,
+        "error": "Arquivo CSV nao permitido pela politica de importacao",
+    }

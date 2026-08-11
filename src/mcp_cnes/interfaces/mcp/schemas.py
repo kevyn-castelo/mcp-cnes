@@ -195,6 +195,7 @@ class DatasetValidationOutput(ContractModel):
     competencias: list[str]
     competencias_mistas: bool
     leitos_invalidos: int = Field(ge=0)
+    leitos_ausentes: int = Field(default=0, ge=0)
     valido: bool
 
 
@@ -277,8 +278,8 @@ class MaintainerGroupOutput(ContractModel):
     cnpj_mantenedora: str
     rede: str | None = None
     unidades: int = Field(ge=1)
-    leitos_existentes: int = Field(ge=0)
-    leitos_sus: int = Field(ge=0)
+    leitos_existentes: int | None = Field(default=None, ge=0)
+    leitos_sus: int | None = Field(default=None, ge=0)
     mix_sus: float | None = Field(default=None, ge=0, le=1)
     mix_nao_sus: float | None = Field(default=None, ge=0, le=1)
     distribuicao_uf: dict[str, int]
@@ -289,6 +290,7 @@ class MaintainerGroupOutput(ContractModel):
 class MaintainerGroupsOutput(ContractModel):
     total_retornado: int = Field(ge=0)
     lote_id: str | None = None
+    unidades_sem_cnpj_mantenedora: int = Field(default=0, ge=0)
     redes: list[MaintainerGroupOutput]
     avisos: list[str]
 

@@ -12,6 +12,14 @@ htmlcov/
 *.sqlite
 *.sqlite3
 downloads/
+downloads/exports/
+
+# Local exports and workbooks; never commit generated datasets.
+*.xlsx
+*.xlsm
+cnes-export-*
+cnes-normalizado-*
+
 .env
 .env.*
 !.env.example

@@ -71,9 +71,10 @@
       "competencias",
       "competencias_mistas",
       "leitos_invalidos",
+      "leitos_ausentes",
       "valido"
     ],
-    "sha256": "bed0b21edc5819d75083f9333ef7760b5ef73d30041f130d611888eef326d084"
+    "sha256": "6403bea3fb3c04b78f0d96c07251ffc025da218d7393541a239aff13fc78c376"
   },
   {
     "name": "cnes_list_lotes",
@@ -225,10 +226,11 @@
     "output_properties": [
       "total_retornado",
       "lote_id",
+      "unidades_sem_cnpj_mantenedora",
       "redes",
       "avisos"
     ],
-    "sha256": "157b391e7dee1064620731a7f272fe24ba26c3ef19e23ea593591bc13c17a3a9"
+    "sha256": "4d72e75537a617f74f54a466e5012be3dd17f3f5ec6eaaac32e5a6b5084badac"
   },
   {
     "name": "cnes_leads_triggers",
