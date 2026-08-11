@@ -90,7 +90,6 @@ import mcp
 import pandas
 import pydantic
 import requests
-import tqdm
 
 def forbidden(*args, **kwargs):
     raise AssertionError('efeito colateral detectado durante import')
