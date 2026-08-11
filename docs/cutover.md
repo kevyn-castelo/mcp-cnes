@@ -1,8 +1,8 @@
 # Runbook de cutover do servidor MCP CNES
 
-O entrypoint oficial é `uv run mcp-cnes`. O arquivo `mcp_server.py` existe apenas
-como baseline temporário de paridade; ele não implementa o handshake do SDK MCP e
-não é um rollback válido para clientes oficiais.
+O entrypoint oficial é `uv run mcp-cnes`. O baseline legado foi removido; clientes
+MCP devem usar exclusivamente o servidor empacotado e um rollback válido deve
+apontar para uma revisão oficial que também use o SDK MCP.
 
 ## 1. Preparar e validar
 
@@ -50,11 +50,10 @@ do repositório quando contiver metadados operacionais do ambiente real.
 
 ## 2. Inventariar consumidores
 
-Antes da troca, procure `mcp_server.py`, `python mcp_server.py` e o nome do servidor
-antigo em todos os arquivos de configuração dos clientes conhecidos. Registre para
-cada consumidor: responsável, localização da configuração, entrypoint anterior,
-data do teste e resultado. Uma busca somente neste repositório não comprova a
-ausência de clientes externos.
+Confirme em todos os clientes conhecidos que o servidor está configurado com
+`uv run mcp-cnes`. Registre para cada consumidor: responsável, localização da
+configuração, data do teste e resultado. Uma busca somente neste repositório não
+comprova a ausência de clientes externos.
 
 ## 3. Alterar o cliente real
 
@@ -121,16 +120,10 @@ O teste `tests/integration/test_official_rollback.py` comprova em CI que esse fo
 de configuração negocia com o SDK oficial. Ele não substitui o ensaio da revisão
 `last-known-good` no cliente real.
 
-## 5. Gate de retirada do legado
+## 5. Cutover concluído
 
-Remova `mcp_server.py` somente quando o responsável aprovar explicitamente que:
-
-- o manifesto do ambiente real está íntegro;
-- as seis ferramentas funcionam no cliente real;
-- o rollback foi ensaiado;
-- a janela de compatibilidade terminou ou foi dispensada;
-- todos os consumidores inventariados usam `mcp-cnes`.
-
-Após a aprovação, remova também testes e referências exclusivas do rollback e
-execute Ruff, Pyright, pytest e o smoke novamente. A remoção é uma mudança separada
-e reversível por Git.
+O baseline legado foi removido em uma mudança separada e reversível por Git. Para
+novas implantações, confirme que o manifesto do ambiente real está íntegro, que as
+seis ferramentas funcionam no cliente real e que o rollback aponta para uma revisão
+oficial. Após qualquer alteração no servidor, execute Ruff, Pyright, pytest e o
+smoke novamente.

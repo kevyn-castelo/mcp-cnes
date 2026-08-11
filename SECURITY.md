@@ -27,9 +27,8 @@ a divulgação coordenada. Não envie segredos reais no relatório.
 
 ## Escopo
 
-O escopo inclui o código em `src/mcp_cnes`, o adaptador legado
-`mcp_server.py`, os fluxos de importação local e a cadeia de dependências e
-CI do repositório.
+O escopo inclui o código em `src/mcp_cnes`, os fluxos de importação local e a
+cadeia de dependências e CI do repositório.
 
 Não são alvos, por si só, a disponibilidade de serviços externos do governo,
 o ambiente operacional administrado pelo usuário ou o conteúdo público dos
