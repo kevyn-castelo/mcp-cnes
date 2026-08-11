@@ -9,6 +9,7 @@ description = "Servidor MCP para consulta de dados do Cadastro Nacional de Estab
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "duckdb>=1.4,<2",
     "mcp[cli]>=2.0.0,<3",
     "openpyxl>=3.1,<4",
     "pandas>=2.0,<4",

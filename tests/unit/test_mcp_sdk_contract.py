@@ -34,9 +34,19 @@ EXPANSION_NAMES = [
     "cnes_timeseries",
     "cnes_diff",
     "cnes_search_advanced",
+    "cnes_search_advanced_v2",
+    "cnes_group_by_mantenedora",
+    "cnes_leads_triggers",
+    "cnes_score_leads",
     "cnes_normalize",
     "cnes_export",
 ]
+V2_TOOLS = {
+    "cnes_search_advanced_v2",
+    "cnes_group_by_mantenedora",
+    "cnes_leads_triggers",
+    "cnes_score_leads",
+}
 
 
 def canonical_hash(value: dict[str, Any]) -> str:
@@ -65,6 +75,11 @@ async def test_tool_catalog_matches_sdk_snapshot_and_has_valid_schemas() -> None
     actual = []
     for tool in listed.tools:
         assert tool.input_schema["additionalProperties"] is False
+        assert tool.input_schema["x-cnes-contract-version"] == (
+            "v2" if tool.name in V2_TOOLS else "v1"
+        )
+        if tool.name == "cnes_export":
+            assert tool.input_schema["x-cnes-contract-versions"] == ["v1", "v2"]
         validator_for(tool.input_schema).check_schema(tool.input_schema)
         assert tool.output_schema is not None
         validator_for(tool.output_schema).check_schema(tool.output_schema)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from mcp_cnes.domain.models import LoadSummary
 from mcp_cnes.domain.remote import (
@@ -14,7 +15,7 @@ from mcp_cnes.domain.remote import (
 from mcp_cnes.domain.rules import validate_bed_range
 
 from .load_data import LoadData
-from .ports import CNESRemoteSource
+from .ports import CNESCatalogRepository, CNESRemoteSource
 
 
 def validate_competence(value: str) -> str:
@@ -51,9 +52,11 @@ class FetchRemoteData:
         source: CNESRemoteSource,
         *,
         loader: LoadData | None = None,
+        repository: CNESCatalogRepository | None = None,
     ) -> None:
         self._source = source
         self._loader = loader
+        self._repository = repository
 
     def execute(
         self,
@@ -62,6 +65,9 @@ class FetchRemoteData:
         uf: str | None = None,
         municipality: str | None = None,
         establishment_type: str | None = None,
+        legal_nature: str | None = None,
+        management: str | None = None,
+        sus_agreement: bool | None = None,
         min_beds: int | None = None,
         max_beds: int | None = None,
         auto_load: bool = True,
@@ -81,24 +87,48 @@ class FetchRemoteData:
             establishment_type=(
                 establishment_type.strip() if establishment_type else None
             ),
+            legal_nature=legal_nature.strip() if legal_nature else None,
+            management=management.strip() if management else None,
+            sus_agreement=sus_agreement,
             min_beds=min_beds,
             max_beds=max_beds,
         )
         fetched = self._source.fetch(request, destination)
         if not auto_load:
             return RemoteLoadResult(fetched)
+        filters = {
+            "uf": normalized_uf,
+            "municipio": request.municipality,
+            "tipo_estabelecimento": request.establishment_type,
+            "natureza_juridica": request.legal_nature,
+            "gestao": request.management,
+            "convenio_sus": request.sus_agreement,
+            "min_leitos": min_beds,
+            "max_leitos": max_beds,
+        }
+        if fetched.contract_version == "v2":
+            register = getattr(self._repository, "register_parquet_batch", None)
+            if not callable(register):
+                raise ValueError("A fonte v2 requer o backend colunar DuckDB")
+            batch_id = cast(str, register(
+                fetched.filepath,
+                source_file=fetched.filepath.name,
+                source=fetched.source,
+                competence=fetched.competence,
+                filters=filters,
+                records=fetched.records,
+                etag=fetched.etag,
+                contract_version=fetched.contract_version,
+                resource_version=fetched.resource_version,
+            ))
+            return RemoteLoadResult(fetched, batch_id)
         if self._loader is None:
             raise ValueError("auto_load requer um carregador configurado")
         summary: LoadSummary = self._loader.execute(
             fetched.filepath,
             source=fetched.source,
             competence=fetched.competence,
-            filters={
-                "uf": normalized_uf,
-                "municipio": request.municipality,
-                "tipo_estabelecimento": request.establishment_type,
-                "min_leitos": min_beds,
-                "max_leitos": max_beds,
-            },
+            filters=filters,
+            etag=fetched.etag,
         )
         return RemoteLoadResult(fetched, summary.batch_id)

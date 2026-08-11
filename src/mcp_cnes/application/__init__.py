@@ -2,6 +2,7 @@
 
 from .analytics import (
     AdvancedSearch,
+    AdvancedSearchV2,
     AggregateData,
     DiffBatches,
     ListBatches,
@@ -11,6 +12,7 @@ from .analytics import (
     ValidateDataset,
 )
 from .datasets import ExportData, NormalizeData
+from .leads import GroupByMaintainer, LeadTriggers, ScoreLeads
 from .load_data import LoadData
 from .remote import (
     FetchRemoteData,
@@ -23,14 +25,17 @@ from .statistics import GetStatistics
 
 __all__ = [
     "AdvancedSearch",
+    "AdvancedSearchV2",
     "AggregateData",
     "DiffBatches",
     "ExportData",
     "FetchRemoteData",
     "GetStatistics",
+    "GroupByMaintainer",
     "ListBatches",
     "ListRemoteCompetences",
     "ListRemoteResources",
+    "LeadTriggers",
     "LoadData",
     "NormalizeData",
     "PurgeBatch",
@@ -38,6 +43,7 @@ __all__ = [
     "SearchByMunicipality",
     "SearchByUF",
     "SearchResult",
+    "ScoreLeads",
     "TimeSeries",
     "UseBatch",
     "ValidateDataset",

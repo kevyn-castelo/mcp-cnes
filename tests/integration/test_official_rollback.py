@@ -15,7 +15,7 @@ FIXTURES = ROOT / "tests" / "fixtures" / "csv"
 async def test_last_known_good_checkout_uses_an_official_mcp_entrypoint(
     tmp_path: Path,
 ) -> None:
-    database = tmp_path / "rollback.sqlite3"
+    database = tmp_path / "rollback.duckdb"
     environment = dict(os.environ)
     environment["MCP_CNES_DATABASE_PATH"] = str(database)
     environment["MCP_CNES_DATA_DIR"] = str(FIXTURES)
@@ -60,7 +60,7 @@ async def test_last_known_good_checkout_uses_an_official_mcp_entrypoint(
 
 @pytest.mark.asyncio
 async def test_rollback_detects_catalog_loss_before_any_reload(tmp_path: Path) -> None:
-    database = tmp_path / "rollback.sqlite3"
+    database = tmp_path / "rollback.duckdb"
     environment = dict(os.environ)
     environment["MCP_CNES_DATABASE_PATH"] = str(database)
     environment["MCP_CNES_DATA_DIR"] = str(FIXTURES)

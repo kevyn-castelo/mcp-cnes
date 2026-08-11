@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from mcp_cnes.domain.models import HospitalInfo
 from mcp_cnes.domain.rules import validate_bed_range
 
-from .ports import CNESRepository
+from .analytics import _validate_filters
+from .ports import CNESCatalogRepository, CNESRepository
 
 
 def _validate_limit(limit: int) -> int:
@@ -27,7 +28,7 @@ class SearchResult:
 
 
 class SearchByMunicipality:
-    def __init__(self, repository: CNESRepository) -> None:
+    def __init__(self, repository: CNESCatalogRepository) -> None:
         self._repository = repository
 
     def execute(
@@ -36,17 +37,38 @@ class SearchByMunicipality:
         limit: int = 50,
         min_beds: int | None = None,
         max_beds: int | None = None,
+        *,
+        uf: str | None = None,
+        establishment_type: str | None = None,
+        legal_nature: str | None = None,
+        management: str | None = None,
+        sus_agreement: bool | None = None,
+        order_by: str = "leitos_existentes",
     ) -> SearchResult:
         _validate_limit(limit)
         validate_bed_range(min_beds, max_beds)
-        matches, total = self._repository.search_by_municipality_with_count(
-            municipality, min_beds, max_beds, limit
+        filters = {
+            "municipio": municipality,
+            "uf": uf,
+            "tipo_estabelecimento": establishment_type,
+            "natureza_juridica": legal_nature,
+            "gestao": management,
+            "convenio_sus": sus_agreement,
+            "min_leitos": min_beds,
+            "max_leitos": max_beds,
+        }
+        effective_filters = {
+            name: value for name, value in filters.items() if value is not None
+        }
+        _validate_filters(effective_filters)
+        matches, total = self._repository.advanced_search(
+            effective_filters, order_by, 0, limit
         )
         return SearchResult(tuple(matches), total, min_beds, max_beds)
 
 
 class SearchByUF:
-    def __init__(self, repository: CNESRepository) -> None:
+    def __init__(self, repository: CNESCatalogRepository) -> None:
         self._repository = repository
 
     def execute(
@@ -55,11 +77,32 @@ class SearchByUF:
         limit: int = 100,
         min_beds: int | None = None,
         max_beds: int | None = None,
+        *,
+        municipality: str | None = None,
+        establishment_type: str | None = None,
+        legal_nature: str | None = None,
+        management: str | None = None,
+        sus_agreement: bool | None = None,
+        order_by: str = "leitos_existentes",
     ) -> SearchResult:
         _validate_limit(limit)
         validate_bed_range(min_beds, max_beds)
-        matches, total = self._repository.search_by_uf_with_count(
-            uf, min_beds, max_beds, limit
+        filters = {
+            "uf": uf,
+            "municipio": municipality,
+            "tipo_estabelecimento": establishment_type,
+            "natureza_juridica": legal_nature,
+            "gestao": management,
+            "convenio_sus": sus_agreement,
+            "min_leitos": min_beds,
+            "max_leitos": max_beds,
+        }
+        effective_filters = {
+            name: value for name, value in filters.items() if value is not None
+        }
+        _validate_filters(effective_filters)
+        matches, total = self._repository.advanced_search(
+            effective_filters, order_by, 0, limit
         )
         return SearchResult(tuple(matches), total, min_beds, max_beds)
 

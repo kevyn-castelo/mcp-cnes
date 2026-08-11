@@ -17,17 +17,21 @@ from pydantic import Field
 from mcp_cnes import __version__
 from mcp_cnes.application import (
     AdvancedSearch,
+    AdvancedSearchV2,
     AggregateData,
     DiffBatches,
     ExportData,
     FetchRemoteData,
     GetStatistics,
+    GroupByMaintainer,
+    LeadTriggers,
     ListBatches,
     ListRemoteCompetences,
     ListRemoteResources,
     LoadData,
     NormalizeData,
     PurgeBatch,
+    ScoreLeads,
     SearchByCNES,
     SearchByMunicipality,
     SearchByUF,
@@ -37,6 +41,7 @@ from mcp_cnes.application import (
 )
 from mcp_cnes.application.ports import (
     CNESCatalogRepository,
+    CNESColumnarRepository,
     CNESImporter,
     CNESRemoteSource,
     CNESRepository,
@@ -45,13 +50,14 @@ from mcp_cnes.domain.errors import CNESDataLoadError, CollectorError, ImportSecu
 from mcp_cnes.infrastructure.config import Settings, load_settings
 from mcp_cnes.infrastructure.exports import LocalDatasetExporter
 from mcp_cnes.infrastructure.importers import CsvCNESImporter, SecureCsvImporter
-from mcp_cnes.infrastructure.persistence import SQLiteCNESRepository
-from mcp_cnes.infrastructure.sources import PortalSUSRemoteSource
+from mcp_cnes.infrastructure.persistence import DuckDBCNESRepository
+from mcp_cnes.infrastructure.sources import DatasusFullRemoteSource, PortalSUSRemoteSource
 
 from .schemas import (
     ActiveBatchOutput,
     AdvancedFiltersInput,
     AdvancedSearchOutput,
+    AdvancedSearchV2Output,
     AggregateOutput,
     AggregatePointOutput,
     BatchListOutput,
@@ -64,7 +70,14 @@ from .schemas import (
     DownloadInstructionsOutput,
     ExportOutput,
     HospitalOutput,
+    HospitalV2Output,
+    LeadScoreOutput,
+    LeadScoresOutput,
+    LeadScoreWeightsInput,
+    LeadTriggersOutput,
     LoadDataOutput,
+    MaintainerGroupOutput,
+    MaintainerGroupsOutput,
     MunicipalitySearchOutput,
     NormalizeOutput,
     PurgeOutput,
@@ -81,10 +94,34 @@ MAX_RESULTS_PER_CALL = 500
 TOOL_ARGUMENTS = {
     "cnes_load_data": frozenset({"filepath"}),
     "cnes_search_municipio": frozenset(
-        {"municipio", "limit", "min_leitos", "max_leitos"}
+        {
+            "municipio",
+            "uf",
+            "tipo_estabelecimento",
+            "natureza_juridica",
+            "gestao",
+            "convenio_sus",
+            "min_leitos",
+            "max_leitos",
+            "order_by",
+            "limit",
+        }
     ),
     "cnes_search_cnes": frozenset({"cnes"}),
-    "cnes_search_uf": frozenset({"uf", "limit", "min_leitos", "max_leitos"}),
+    "cnes_search_uf": frozenset(
+        {
+            "uf",
+            "municipio",
+            "tipo_estabelecimento",
+            "natureza_juridica",
+            "gestao",
+            "convenio_sus",
+            "min_leitos",
+            "max_leitos",
+            "order_by",
+            "limit",
+        }
+    ),
     "cnes_statistics": frozenset(),
     "cnes_download_instructions": frozenset(),
     "cnes_list_sources": frozenset(),
@@ -95,6 +132,9 @@ TOOL_ARGUMENTS = {
             "uf",
             "municipio",
             "tipo_estabelecimento",
+            "natureza_juridica",
+            "gestao",
+            "convenio_sus",
             "min_leitos",
             "max_leitos",
             "fonte",
@@ -109,17 +149,51 @@ TOOL_ARGUMENTS = {
     "cnes_aggregate": frozenset({"group_by", "metrica", "filtros", "lote_id"}),
     "cnes_timeseries": frozenset({"chave", "tipo_chave", "de", "ate"}),
     "cnes_diff": frozenset({"lote_a", "lote_b"}),
-    "cnes_search_advanced": frozenset(
-        {"filtros", "order_by", "offset", "limit", "lote_id"}
+    "cnes_search_advanced": frozenset({"filtros", "order_by", "offset", "limit", "lote_id"}),
+    "cnes_search_advanced_v2": frozenset({"filtros", "order_by", "offset", "limit", "lote_id"}),
+    "cnes_group_by_mantenedora": frozenset({"filtros", "limit", "lote_id"}),
+    "cnes_leads_triggers": frozenset(
+        {
+            "competencia_a",
+            "competencia_b",
+            "delta_min",
+            "tipo_estabelecimento",
+            "lote_a",
+            "lote_b",
+        }
+    ),
+    "cnes_score_leads": frozenset(
+        {"competencia_a", "competencia_b", "pesos", "filtros", "limit", "lote_a", "lote_b"}
     ),
     "cnes_normalize": frozenset({"filepath", "origem", "destino"}),
-    "cnes_export": frozenset({"formato", "filtros", "destino", "lote_id"}),
+    "cnes_export": frozenset(
+        {
+            "formato",
+            "filtros",
+            "destino",
+            "lote_id",
+            "cnes_list",
+            "limit",
+            "offset",
+            "order_by",
+            "perfil_saida",
+        }
+    ),
 }
 BedMinimum = Annotated[int | None, Field(ge=0, description="Mínimo inclusivo de leitos")]
 BedMaximum = Annotated[int | None, Field(ge=0, description="Máximo inclusivo de leitos")]
 ResultLimit = Annotated[
     int,
     Field(ge=1, le=MAX_RESULTS_PER_CALL, description="Quantidade máxima de resultados"),
+]
+
+
+SearchOrder = Annotated[
+    str,
+    Field(
+        pattern=r"^(cnes|municipio|leitos_existentes|leitos_sus)$",
+        description="Crescente para cnes/municipio; decrescente para campos de leitos",
+    ),
 ]
 
 
@@ -155,9 +229,7 @@ def _structured_error_text(message: str, *, code: str = "invalid_request") -> st
 def _tool_error(message: str, *, code: str = "invalid_request") -> CallToolResult:
     return CallToolResult(
         is_error=True,
-        content=[
-            TextContent(type="text", text=_structured_error_text(message, code=code))
-        ],
+        content=[TextContent(type="text", text=_structured_error_text(message, code=code))],
     )
 
 
@@ -216,14 +288,29 @@ class StrictToolArgumentsMiddleware:
                     elif isinstance(block, TextContent):
                         block.text = _structured_error_text(block.text)
         if ctx.method == "tools/list" and result is not None:
-            tools = result.get("tools", []) if isinstance(result, dict) else getattr(result, "tools", [])
+            tools = (
+                result.get("tools", [])
+                if isinstance(result, dict)
+                else getattr(result, "tools", [])
+            )
             for tool in tools:
                 if isinstance(tool, dict):
                     schema = tool.get("inputSchema") or tool.get("input_schema")
+                    tool_name = tool.get("name")
                 else:
                     schema = getattr(tool, "input_schema", None)
+                    tool_name = getattr(tool, "name", None)
                 if isinstance(schema, dict):
                     schema["additionalProperties"] = False
+                    v2_tools = {
+                        "cnes_search_advanced_v2",
+                        "cnes_group_by_mantenedora",
+                        "cnes_leads_triggers",
+                        "cnes_score_leads",
+                    }
+                    schema["x-cnes-contract-version"] = "v2" if tool_name in v2_tools else "v1"
+                    if tool_name == "cnes_export":
+                        schema["x-cnes-contract-versions"] = ["v1", "v2"]
         return result
 
 
@@ -266,12 +353,24 @@ def create_mcp_server(
     repository: CNESCatalogRepository | None = None,
     importer: CNESImporter | None = None,
     remote_source: CNESRemoteSource | None = None,
+    remote_sources: Mapping[str, CNESRemoteSource] | None = None,
 ) -> MCPServer:
     """Compõe o servidor sem iniciar transporte, rede ou leitura de arquivos."""
 
     runtime_settings = settings or load_settings()
-    runtime_repository = repository or SQLiteCNESRepository(
-        runtime_settings.database_path,
+    default_columnar_path = Settings().columnar_database_path
+    columnar_path = runtime_settings.columnar_database_path
+    if (
+        columnar_path == default_columnar_path
+        and runtime_settings.database_path != Settings().database_path
+    ):
+        columnar_path = runtime_settings.database_path.with_suffix(".duckdb")
+    columnar_dir = runtime_settings.columnar_dir
+    if columnar_dir == Settings().columnar_dir and columnar_path != default_columnar_path:
+        columnar_dir = columnar_path.parent / "parquet"
+    runtime_repository = repository or DuckDBCNESRepository(
+        columnar_path,
+        columnar_dir=columnar_dir,
         batch_retention_count=runtime_settings.batch_retention_count,
     )
     runtime_importer = importer or SecureCsvImporter(
@@ -280,19 +379,38 @@ def create_mcp_server(
         runtime_settings.max_csv_size_bytes,
         runtime_settings.allowed_csv_files,
     )
-    runtime_remote_source = remote_source or PortalSUSRemoteSource(runtime_settings)
+    if remote_sources is not None and remote_source is not None:
+        raise ValueError("Use remote_source ou remote_sources, não ambos")
+    if remote_sources is not None:
+        runtime_remote_sources = dict(remote_sources)
+    elif remote_source is not None:
+        runtime_remote_sources = {remote_source.name: remote_source}
+    else:
+        portal_source = PortalSUSRemoteSource(runtime_settings)
+        full_source = DatasusFullRemoteSource(runtime_settings)
+        runtime_remote_sources = {
+            portal_source.name: portal_source,
+            full_source.name: full_source,
+        }
+    default_remote_source_name = "portal_sus_hospitais_leitos"
+    if default_remote_source_name not in runtime_remote_sources:
+        default_remote_source_name = next(iter(runtime_remote_sources))
+
+    def select_remote_source(name: str | None) -> CNESRemoteSource:
+        selected = name or default_remote_source_name
+        try:
+            return runtime_remote_sources[selected]
+        except KeyError:
+            available = ", ".join(sorted(runtime_remote_sources))
+            raise ValueError(
+                f"fonte desconhecida: {selected}. Fontes disponíveis: {available}."
+            ) from None
 
     load_data = LoadData(runtime_repository, runtime_importer)
     search_municipality = SearchByMunicipality(runtime_repository)
     search_cnes = SearchByCNES(runtime_repository)
     search_uf = SearchByUF(runtime_repository)
     get_statistics = GetStatistics(runtime_repository)
-    list_remote_competences = ListRemoteCompetences(runtime_remote_source)
-    list_remote_resources = ListRemoteResources(runtime_remote_source)
-    fetch_remote_data = FetchRemoteData(
-        runtime_remote_source,
-        loader=LoadData(runtime_repository, CsvCNESImporter()),
-    )
     catalog_repository = runtime_repository
     validate_dataset = ValidateDataset(catalog_repository)
     list_batches = ListBatches(catalog_repository)
@@ -302,6 +420,10 @@ def create_mcp_server(
     time_series = TimeSeries(catalog_repository)
     diff_batches = DiffBatches(catalog_repository)
     advanced_search = AdvancedSearch(catalog_repository)
+    advanced_search_v2 = AdvancedSearchV2(cast(CNESColumnarRepository, catalog_repository))
+    group_by_maintainer = GroupByMaintainer(cast(CNESColumnarRepository, catalog_repository))
+    lead_triggers = LeadTriggers(cast(CNESColumnarRepository, catalog_repository))
+    score_leads = ScoreLeads(cast(CNESColumnarRepository, catalog_repository))
     dataset_exporter = LocalDatasetExporter(runtime_settings.output_dir)
     normalize_data = NormalizeData(runtime_importer, dataset_exporter)
     export_data = ExportData(catalog_repository, dataset_exporter)
@@ -327,9 +449,7 @@ def create_mcp_server(
         try:
             summary = load_data.execute(Path(filepath))
         except ImportSecurityError as exc:
-            raise ValueError(
-                f"{exc}. Verifique filepath e a politica configurada."
-            ) from None
+            raise ValueError(f"{exc}. Verifique filepath e a politica configurada.") from None
         except CNESDataLoadError as exc:
             raise ValueError(_safe_load_error(exc)) from None
         if summary.batch_id is None:
@@ -342,9 +462,7 @@ def create_mcp_server(
             linhas_aceitas=summary.records_loaded,
             linhas_rejeitadas=summary.rows_rejected,
             linhas_ignoradas=summary.rows_ignored,
-            motivos_rejeicao={
-                reason.code: reason.count for reason in summary.rejection_reasons
-            },
+            motivos_rejeicao={reason.code: reason.count for reason in summary.rejection_reasons},
             mensagem=f"Carregados {summary.records_loaded} estabelecimentos de saúde",
         )
 
@@ -357,13 +475,30 @@ def create_mcp_server(
         limit: ResultLimit = 50,
         min_leitos: BedMinimum = None,
         max_leitos: BedMaximum = None,
+        uf: Annotated[str | None, Field(pattern=r"^[A-Za-z]{2}$")] = None,
+        tipo_estabelecimento: Annotated[str | None, Field(min_length=1)] = None,
+        natureza_juridica: Annotated[str | None, Field(min_length=1)] = None,
+        gestao: Annotated[str | None, Field(min_length=1)] = None,
+        convenio_sus: bool | None = None,
+        order_by: SearchOrder = "leitos_existentes",
     ) -> MunicipalitySearchOutput:
         """Busca estabelecimentos por município e faixa opcional de leitos."""
 
         _require_data(runtime_repository)
         if not municipio.strip():
             raise ValueError("municipio não pode conter somente espaços.")
-        result = search_municipality.execute(municipio, limit, min_leitos, max_leitos)
+        result = search_municipality.execute(
+            municipio,
+            limit,
+            min_leitos,
+            max_leitos,
+            uf=uf,
+            establishment_type=tipo_estabelecimento,
+            legal_nature=natureza_juridica,
+            management=gestao,
+            sus_agreement=convenio_sus,
+            order_by=order_by,
+        )
         return MunicipalitySearchOutput(
             municipio=municipio,
             total_encontrados=result.total_available,
@@ -407,11 +542,28 @@ def create_mcp_server(
         limit: ResultLimit = 100,
         min_leitos: BedMinimum = None,
         max_leitos: BedMaximum = None,
+        municipio: Annotated[str | None, Field(min_length=1)] = None,
+        tipo_estabelecimento: Annotated[str | None, Field(min_length=1)] = None,
+        natureza_juridica: Annotated[str | None, Field(min_length=1)] = None,
+        gestao: Annotated[str | None, Field(min_length=1)] = None,
+        convenio_sus: bool | None = None,
+        order_by: SearchOrder = "leitos_existentes",
     ) -> UFSearchOutput:
         """Busca estabelecimentos por UF e faixa opcional de leitos."""
 
         _require_data(runtime_repository)
-        result = search_uf.execute(uf, limit, min_leitos, max_leitos)
+        result = search_uf.execute(
+            uf,
+            limit,
+            min_leitos,
+            max_leitos,
+            municipality=municipio,
+            establishment_type=tipo_estabelecimento,
+            legal_nature=natureza_juridica,
+            management=gestao,
+            sus_agreement=convenio_sus,
+            order_by=order_by,
+        )
         return UFSearchOutput(
             uf=uf.upper(),
             total_encontrados=result.total_available,
@@ -460,51 +612,80 @@ def create_mcp_server(
 
     @server.tool(name="cnes_list_sources", structured_output=True)
     def cnes_list_sources() -> SourceListOutput:
-        """Lista a fonte remota oficial e sua cobertura canônica observada."""
+        """Lista as fontes oficiais e sua cobertura canônica observada."""
 
         checked_at = datetime.now(UTC).isoformat()
-        try:
-            resources = list_remote_resources.execute()
-        except CollectorError as exc:
-            return SourceListOutput(
-                fontes=[
+        outputs: list[SourceOutput] = []
+        for source_name, source in runtime_remote_sources.items():
+            try:
+                resources = ListRemoteResources(source).execute()
+            except CollectorError as exc:
+                outputs.append(
                     SourceOutput(
-                        nome=runtime_remote_source.name,
+                        nome=source_name,
                         status="indisponivel",
                         campos_cobertos=[],
                         campos_derivados=[],
                         ultima_verificacao=checked_at,
                         observacoes=[exc.code, str(exc)],
                     )
-                ]
-            )
-        years = sorted({str(item.year) for item in resources})
-        return SourceListOutput(
-            fontes=[
-                SourceOutput(
-                    nome=runtime_remote_source.name,
-                    status="disponivel",
-                    campos_cobertos=[
-                        "COMPETENCIA",
-                        "UF",
-                        "MUNICIPIO",
-                        "CNES",
-                        "NOME_FANTASIA",
-                        "TIPO_ESTABELECIMENTO",
-                        "NATUREZA_JURIDICA",
-                        "GESTAO",
-                        "LEITOS_EXISTENTES",
-                        "LEITOS_SUS",
-                    ],
-                    campos_derivados=["CONVENIO_SUS"],
-                    ultima_verificacao=checked_at,
-                    observacoes=[
-                        f"Arquivos anuais disponíveis: {', '.join(years)}",
-                        "Filtros são aplicados localmente após o download.",
-                    ],
                 )
-            ]
-        )
+                continue
+            years = sorted({str(item.year) for item in resources})
+            is_full = source_name == "datasus_base_completa"
+            outputs.append(
+                SourceOutput(
+                    nome=source_name,
+                    status="disponivel",
+                    campos_cobertos=(
+                        [
+                            "CONTRATO_V1",
+                            "RAZAO_SOCIAL",
+                            "CNPJ",
+                            "CNPJ_MANTENEDORA",
+                            "TIPO_PESSOA",
+                            "NIVEL_DEPENDENCIA",
+                            "ENDERECO",
+                            "LATITUDE",
+                            "LONGITUDE",
+                            "TELEFONE",
+                            "EMAIL",
+                            "LEITOS_POR_TIPO",
+                        ]
+                        if is_full
+                        else [
+                            "COMPETENCIA",
+                            "UF",
+                            "MUNICIPIO",
+                            "CNES",
+                            "NOME_FANTASIA",
+                            "TIPO_ESTABELECIMENTO",
+                            "NATUREZA_JURIDICA",
+                            "GESTAO",
+                            "LEITOS_EXISTENTES",
+                            "LEITOS_SUS",
+                        ]
+                    ),
+                    campos_derivados=(
+                        ["CONVENIO_SUS", "GEO_CONFIAVEL", "LEITOS_POR_GRUPO"]
+                        if is_full
+                        else ["CONVENIO_SUS"]
+                    ),
+                    ultima_verificacao=checked_at,
+                    observacoes=(
+                        [
+                            f"ZIPs mensais disponíveis: {', '.join(years)}",
+                            "Somente pessoa jurídica entra no schema padrão; nenhum CPF é projetado.",
+                        ]
+                        if is_full
+                        else [
+                            f"Arquivos anuais disponíveis: {', '.join(years)}",
+                            "Filtros são aplicados localmente após o download.",
+                        ]
+                    ),
+                )
+            )
+        return SourceListOutput(fontes=outputs)
 
     @server.tool(name="cnes_list_competencias", structured_output=True)
     def cnes_list_competencias(
@@ -519,16 +700,13 @@ def create_mcp_server(
     ) -> CompetenceListOutput:
         """Lista competências mensais de um único arquivo anual do CNES."""
 
-        if fonte is not None and fonte != runtime_remote_source.name:
-            raise ValueError(
-                f"fonte desconhecida: {fonte}. Use cnes_list_sources para descobrir fontes."
-            )
+        source = select_remote_source(fonte)
         try:
-            result = list_remote_competences.execute(ano)
+            result = ListRemoteCompetences(source).execute(ano)
         except CollectorError as exc:
             _raise_remote_error(exc)
         return CompetenceListOutput(
-            fonte=runtime_remote_source.name,
+            fonte=source.name,
             ano_consultado=result.year,
             competencias_disponiveis=list(result.competences),
             mais_recente=result.competences[-1] if result.competences else None,
@@ -553,6 +731,15 @@ def create_mcp_server(
             str | None,
             Field(min_length=1, description="Descrição parcial do tipo"),
         ] = None,
+        natureza_juridica: Annotated[
+            str | None,
+            Field(min_length=1, description="Descrição parcial da natureza jurídica"),
+        ] = None,
+        gestao: Annotated[
+            str | None,
+            Field(min_length=1, description="Gestão do estabelecimento"),
+        ] = None,
+        convenio_sus: bool | None = None,
         min_leitos: BedMinimum = None,
         max_leitos: BedMaximum = None,
         fonte: str | None = None,
@@ -561,16 +748,21 @@ def create_mcp_server(
     ) -> RemoteFetchOutput:
         """Baixa, filtra e normaliza uma competência oficial sem passo manual."""
 
-        if fonte is not None and fonte != runtime_remote_source.name:
-            raise ValueError(
-                f"fonte desconhecida: {fonte}. Use cnes_list_sources para descobrir fontes."
-            )
+        source = select_remote_source(fonte)
+        fetch_remote_data = FetchRemoteData(
+            source,
+            loader=LoadData(runtime_repository, CsvCNESImporter()),
+            repository=catalog_repository,
+        )
         try:
             result = fetch_remote_data.execute(
                 competence=competencia,
                 uf=uf,
                 municipality=municipio,
                 establishment_type=tipo_estabelecimento,
+                legal_nature=natureza_juridica,
+                management=gestao,
+                sus_agreement=convenio_sus,
                 min_beds=min_leitos,
                 max_beds=max_leitos,
                 auto_load=auto_load,
@@ -587,7 +779,7 @@ def create_mcp_server(
             fonte_usada=result.fetch.source,
             campos_nao_preenchidos=list(result.fetch.missing_fields),
             campos_derivados=list(result.fetch.derived_fields),
-            cache=result.fetch.from_cache,
+            cache=result.fetch.from_cache or result.fetch.download_cache_hit,
             etag=result.fetch.etag,
         )
 
@@ -633,16 +825,15 @@ def create_mcp_server(
 
         if lote_id is not None:
             removed, released = purge_batch.execute(lote_id)
-            return PurgeOutput(
-                lote_id=lote_id, itens_removidos=removed, bytes_liberados=released
-            )
-        purge_cache = getattr(runtime_remote_source, "purge_cache", None)
-        if not callable(purge_cache):
-            return PurgeOutput(lote_id=None, itens_removidos=0, bytes_liberados=0)
-        removed, released = cast(tuple[int, int], purge_cache())
-        return PurgeOutput(
-            lote_id=None, itens_removidos=removed, bytes_liberados=released
-        )
+            return PurgeOutput(lote_id=lote_id, itens_removidos=removed, bytes_liberados=released)
+        removed = released = 0
+        for source in runtime_remote_sources.values():
+            purge_cache = getattr(source, "purge_cache", None)
+            if callable(purge_cache):
+                source_removed, source_released = cast(tuple[int, int], purge_cache())
+                removed += source_removed
+                released += source_released
+        return PurgeOutput(lote_id=None, itens_removidos=removed, bytes_liberados=released)
 
     @server.tool(name="cnes_aggregate", structured_output=True)
     def cnes_aggregate(
@@ -652,11 +843,7 @@ def create_mcp_server(
         ],
         metrica: Annotated[
             str,
-            Field(
-                pattern=(
-                    r"^(estabelecimentos|leitos_existentes|leitos_sus|media_leitos)$"
-                )
-            ),
+            Field(pattern=(r"^(estabelecimentos|leitos_existentes|leitos_sus|media_leitos)$")),
         ],
         filtros: AdvancedFiltersInput | None = None,
         lote_id: str | None = None,
@@ -726,12 +913,113 @@ def create_mcp_server(
             estabelecimentos=[HospitalOutput.from_domain(item) for item in result.items],
         )
 
+    @server.tool(name="cnes_search_advanced_v2", structured_output=True)
+    def cnes_search_advanced_v2(
+        filtros: AdvancedFiltersInput | None = None,
+        order_by: Annotated[
+            str,
+            Field(pattern=r"^(cnes|municipio|leitos_existentes|leitos_sus)$"),
+        ] = "cnes",
+        offset: Annotated[int, Field(ge=0)] = 0,
+        limit: ResultLimit = 100,
+        lote_id: str | None = None,
+    ) -> AdvancedSearchV2Output:
+        """Consulta os campos institucionais e leitos desagregados do contrato v2."""
+
+        values = filtros.model_dump(exclude_none=True) if filtros else {}
+        result = advanced_search_v2.execute(values, order_by, offset, limit, lote_id)
+        return AdvancedSearchV2Output(
+            total_encontrados=result.total_available,
+            total_retornados=len(result.items),
+            offset=result.offset,
+            limit=result.limit,
+            estabelecimentos=[HospitalV2Output.from_domain(item) for item in result.items],
+        )
+
+    @server.tool(name="cnes_group_by_mantenedora", structured_output=True)
+    def cnes_group_by_mantenedora(
+        filtros: AdvancedFiltersInput | None = None,
+        limit: ResultLimit = 100,
+        lote_id: str | None = None,
+    ) -> MaintainerGroupsOutput:
+        """Agrupa unidades do lote v2 por CNPJ da mantenedora."""
+
+        values = filtros.model_dump(exclude_none=True) if filtros else {}
+        result = group_by_maintainer.execute(values, limit, lote_id)
+        return MaintainerGroupsOutput(
+            total_retornado=len(result["redes"]),
+            lote_id=result["lote_id"],
+            redes=[MaintainerGroupOutput.model_validate(item) for item in result["redes"]],
+            avisos=[
+                "A base mensal informa o CNPJ da mantenedora, mas não publica seu nome; "
+                "rede permanece nulo."
+            ],
+        )
+
+    @server.tool(name="cnes_leads_triggers", structured_output=True)
+    def cnes_leads_triggers(
+        competencia_a: Annotated[str, Field(pattern=r"^\d{6}$")],
+        competencia_b: Annotated[str, Field(pattern=r"^\d{6}$")],
+        delta_min: Annotated[int, Field(ge=1)],
+        tipo_estabelecimento: Annotated[str | None, Field(min_length=1)] = None,
+        lote_a: str | None = None,
+        lote_b: str | None = None,
+    ) -> LeadTriggersOutput:
+        """Detecta expansão, retração, entrada e saída entre competências v2."""
+
+        result = lead_triggers.execute(
+            competencia_a, competencia_b, delta_min, tipo_estabelecimento, lote_a, lote_b
+        )
+        return LeadTriggersOutput.model_validate(result)
+
+    @server.tool(name="cnes_score_leads", structured_output=True)
+    def cnes_score_leads(
+        competencia_a: Annotated[str, Field(pattern=r"^\d{6}$")],
+        competencia_b: Annotated[str, Field(pattern=r"^\d{6}$")],
+        pesos: LeadScoreWeightsInput,
+        filtros: AdvancedFiltersInput | None = None,
+        limit: ResultLimit = 100,
+        lote_a: str | None = None,
+        lote_b: str | None = None,
+    ) -> LeadScoresOutput:
+        """Ordena leads por score decomposto usando somente os pesos informados."""
+
+        filter_values = filtros.model_dump(exclude_none=True) if filtros else {}
+        weight_values = pesos.model_dump()
+        result = score_leads.execute(
+            competencia_a,
+            competencia_b,
+            weight_values,
+            filter_values,
+            limit,
+            lote_a,
+            lote_b,
+        )
+        return LeadScoresOutput(
+            competencia_a=competencia_a,
+            competencia_b=competencia_b,
+            lote_a=result["lote_a"],
+            lote_b=result["lote_b"],
+            pesos=pesos,
+            total_retornado=len(result["leads"]),
+            leads=[LeadScoreOutput.model_validate(item) for item in result["leads"]],
+            metodologia=[
+                "porte: posição acumulada dos leitos existentes dentro do recorte",
+                "complexidade_uti: percentil da soma de UTI adulto, pediátrica e neonatal",
+                "complexidade_habilitacoes: percentil da quantidade de habilitações ativas",
+                "complexidade: média dos dois componentes; usa habilitações quando UTI está ausente",
+                "mix_pagador: percentual de leitos não SUS; nulo quando não há leitos",
+                "tendencia: posição acumulada do delta de leitos entre as competências",
+                "total: média ponderada somente das dimensões disponíveis",
+            ],
+            campos_ausentes=[],
+            avisos=result["avisos"],
+        )
+
     @server.tool(name="cnes_normalize", structured_output=True)
     def cnes_normalize(
         filepath: Annotated[str, Field(min_length=1)],
-        origem: Annotated[
-            str, Field(pattern=r"^(auto|csv_canonico|portal_sus)$")
-        ] = "auto",
+        origem: Annotated[str, Field(pattern=r"^(auto|csv_canonico|portal_sus)$")] = "auto",
         destino: str | None = None,
     ) -> NormalizeOutput:
         """Normaliza um CSV local aprovado para o contrato canônico de 11 campos."""
@@ -741,9 +1029,7 @@ def create_mcp_server(
                 Path(filepath), origem, Path(destino) if destino else None
             )
         except ImportSecurityError as exc:
-            raise ValueError(
-                f"{exc}. Verifique filepath e a politica configurada."
-            ) from None
+            raise ValueError(f"{exc}. Verifique filepath e a politica configurada.") from None
         except CNESDataLoadError as exc:
             raise ValueError(_safe_load_error(exc)) from None
         return NormalizeOutput(
@@ -756,12 +1042,27 @@ def create_mcp_server(
 
     @server.tool(name="cnes_export", structured_output=True)
     def cnes_export(
-        formato: Annotated[str, Field(pattern=r"^(csv|json|xlsx)$")],
+        formato: Annotated[str, Field(pattern=r"^(csv|json|jsonl|xlsx)$")],
         filtros: AdvancedFiltersInput | None = None,
         destino: str | None = None,
         lote_id: str | None = None,
+        cnes_list: Annotated[
+            list[str] | None,
+            Field(
+                min_length=1,
+                max_length=500,
+                description="Conjunto explícito de códigos CNES de sete dígitos",
+            ),
+        ] = None,
+        limit: Annotated[int | None, Field(ge=1, le=500)] = None,
+        offset: Annotated[int, Field(ge=0)] = 0,
+        order_by: SearchOrder = "cnes",
+        perfil_saida: Annotated[
+            str | None,
+            Field(pattern=r"^crm_generico$"),
+        ] = None,
     ) -> ExportOutput:
-        """Exporta a seleção completa para CSV, JSON ou XLSX local."""
+        """Exporta a seleção para CSV, JSON, JSONL ou XLSX, com perfil CRM opcional."""
 
         values = filtros.model_dump(exclude_none=True) if filtros else {}
         result = export_data.execute(
@@ -769,6 +1070,11 @@ def create_mcp_server(
             values,
             Path(destino) if destino else None,
             lote_id,
+            cnes_list,
+            limit,
+            offset,
+            order_by,
+            perfil_saida,
         )
         return ExportOutput(
             filepath=str(result.filepath), formato=formato, registros=result.records

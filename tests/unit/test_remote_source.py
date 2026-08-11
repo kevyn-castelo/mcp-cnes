@@ -88,7 +88,7 @@ def annual_csv() -> bytes:
         "202501;SP;S\u00e3o Paulo;0000001;Hospital A;M;05;Hospital Geral;2062;"
         "Sociedade Empres\u00e1ria;80;60\n"
         "202501;SP;Santos;0000002;Hospital B;E;05;Hospital Geral;2062;"
-        "Sociedade EmpresÃ¡ria;40;0\n"
+        "Sociedade Empresária;40;0\n"
         "202502;SP;S\u00e3o Paulo;0000003;Hospital C;M;05;Hospital Geral;2062;"
         "Sociedade Empres\u00e1ria;90;70\n"
     ).encode("latin-1")
@@ -135,6 +135,9 @@ def test_discovers_official_resource_and_normalizes_local_filters(tmp_path: Path
             uf="SP",
             municipality="sao",
             establishment_type="geral",
+            legal_nature="sociedade",
+            management="M",
+            sus_agreement=True,
             min_beds=50,
             max_beds=100,
         )
@@ -150,6 +153,9 @@ def test_discovers_official_resource_and_normalizes_local_filters(tmp_path: Path
         "uf",
         "municipio",
         "tipo_estabelecimento",
+        "natureza_juridica",
+        "gestao",
+        "convenio_sus",
         "min_leitos",
         "max_leitos",
     )
@@ -180,6 +186,66 @@ def test_closed_competence_uses_verified_disk_cache_without_network(tmp_path: Pa
     assert second.from_cache is True
     assert len(session.calls) == 2
     assert first.filepath == second.filepath
+
+
+def test_different_municipality_reuses_same_closed_annual_download(
+    tmp_path: Path,
+) -> None:
+    session = Session(
+        [Response(catalog_html()), Response(annual_csv(), headers={"ETag": '"annual"'})]
+    )
+    source = PortalSUSRemoteSource(
+        settings(tmp_path),
+        session=session,
+        sleeper=lambda _: None,
+        clock=lambda: datetime(2026, 8, 9, tzinfo=UTC),
+    )
+
+    first = source.fetch(
+        RemoteFetchRequest(competence="202501", municipality="São Paulo")
+    )
+    second = source.fetch(
+        RemoteFetchRequest(competence="202501", municipality="Santos")
+    )
+
+    assert first.download_cache_hit is False
+    assert second.download_cache_hit is True
+    assert second.etag == '"annual"'
+    assert [call["url"] for call in session.calls] == [CATALOG_URL, RESOURCE_URL]
+
+
+def test_open_year_annual_cache_is_revalidated_with_etag_without_redownload(
+    tmp_path: Path,
+) -> None:
+    resource_url = RESOURCE_URL.replace("2025", "2026")
+    catalog = catalog_resources(
+        (2026, resource_url, "resource-2026", "2026-08-01T00:00:00")
+    )
+    content = annual_csv().replace(b"2025", b"2026")
+    session = Session(
+        [
+            Response(catalog),
+            Response(content, headers={"ETag": '"open-year"'}),
+            Response(status_code=304, headers={"ETag": '"open-year"'}),
+        ]
+    )
+    source = PortalSUSRemoteSource(
+        settings(tmp_path),
+        session=session,
+        sleeper=lambda _: None,
+        clock=lambda: datetime(2026, 8, 9, tzinfo=UTC),
+    )
+
+    first = source.fetch(
+        RemoteFetchRequest(competence="202601", municipality="São Paulo")
+    )
+    second = source.fetch(
+        RemoteFetchRequest(competence="202601", municipality="Santos")
+    )
+
+    assert first.download_cache_hit is False
+    assert second.download_cache_hit is True
+    assert session.calls[-1]["headers"]["If-None-Match"] == '"open-year"'
 
 
 def test_catalog_rejects_download_outside_the_approved_host(tmp_path: Path) -> None:

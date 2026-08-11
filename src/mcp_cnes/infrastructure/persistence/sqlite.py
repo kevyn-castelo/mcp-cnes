@@ -16,7 +16,7 @@ from mcp_cnes.domain.identity import canonical_hospital_digest
 from mcp_cnes.domain.models import HospitalInfo, LoadSummary
 from mcp_cnes.domain.rules import normalize_search_text
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 MIGRATION_1 = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -99,6 +99,8 @@ CREATE INDEX IF NOT EXISTS idx_import_batches_imported_at
     ON import_batches(imported_at DESC);
 """
 
+MIGRATION_4_COLUMNS = {"etag": "TEXT"}
+
 MIGRATIONS = {1: MIGRATION_1, 2: MIGRATION_2, 3: MIGRATION_3}
 
 HOSPITAL_COLUMNS = """
@@ -154,6 +156,9 @@ class SQLiteCNESRepository:
                 if target_version == 3:
                     self._apply_migration_3(connection)
                     continue
+                if target_version == 4:
+                    self._apply_migration_4(connection)
+                    continue
                 connection.executescript(MIGRATIONS[target_version])
                 applied_at = datetime.now(UTC).isoformat()
                 connection.execute(
@@ -199,6 +204,38 @@ class SQLiteCNESRepository:
             connection.rollback()
             raise
 
+    @staticmethod
+    def _apply_migration_4(connection: sqlite3.Connection) -> None:
+        """Adiciona a proveniência HTTP sem invalidar lotes existentes."""
+
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            current = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            if current >= 4:
+                connection.commit()
+                return
+            if current != 3:
+                raise RuntimeError("Migração 4 exige schema SQLite na versão 3")
+            existing = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(import_batches)")
+            }
+            for name, definition in MIGRATION_4_COLUMNS.items():
+                if name not in existing:
+                    connection.execute(
+                        f"ALTER TABLE import_batches ADD COLUMN {name} {definition}"
+                    )
+            applied_at = datetime.now(UTC).isoformat()
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, ?)",
+                (applied_at,),
+            )
+            connection.execute("PRAGMA user_version = 4")
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+
     def replace_all(
         self,
         hospitals: Sequence[HospitalInfo],
@@ -210,6 +247,7 @@ class SQLiteCNESRepository:
         source: str = "arquivo_local",
         competence: str | None = None,
         filters: Mapping[str, Any] | None = None,
+        etag: str | None = None,
     ) -> str:
         effective_summary = summary or LoadSummary(len(hospitals), len(hospitals), 0, 0)
         effective_batch_id = batch_id or canonical_hospital_digest(hospitals)
@@ -238,6 +276,7 @@ class SQLiteCNESRepository:
                             source,
                             competence,
                             filters or {},
+                            etag,
                         )
                         self._purge_old_batches(connection, effective_batch_id)
                         connection.commit()
@@ -249,6 +288,7 @@ class SQLiteCNESRepository:
                         source,
                         competence,
                         filters or {},
+                        etag,
                     )
                     self._purge_old_batches(connection, effective_batch_id)
                     connection.commit()
@@ -259,8 +299,8 @@ class SQLiteCNESRepository:
                     INSERT INTO import_batches(
                         id, source_file, status, rows_read, accepted_count,
                         rejected_count, ignored_count, rejection_reasons, imported_at,
-                        source, competence, filters_json
-                    ) VALUES (?, ?, 'processing', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        source, competence, filters_json, etag
+                    ) VALUES (?, ?, 'processing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         effective_batch_id,
@@ -274,6 +314,7 @@ class SQLiteCNESRepository:
                         source,
                         competence,
                         json.dumps(filters or {}, ensure_ascii=False, sort_keys=True),
+                        etag,
                     ),
                 )
                 connection.executemany(
@@ -309,6 +350,7 @@ class SQLiteCNESRepository:
         source: str,
         competence: str | None,
         filters: Mapping[str, Any],
+        etag: str | None = None,
     ) -> str:
         return self.replace_all(
             hospitals,
@@ -318,6 +360,7 @@ class SQLiteCNESRepository:
             source=source,
             competence=competence,
             filters=filters,
+            etag=etag,
         )
 
     def _purge_old_batches(
@@ -659,10 +702,11 @@ class SQLiteCNESRepository:
         source: str,
         competence: str | None,
         filters: Mapping[str, Any],
+        etag: str | None = None,
     ) -> None:
         with self._connection() as connection, connection:
             self._update_batch_metadata_row(
-                connection, batch_id, source, competence, filters
+                connection, batch_id, source, competence, filters, etag
             )
 
     @staticmethod
@@ -672,22 +716,62 @@ class SQLiteCNESRepository:
         source: str,
         competence: str | None,
         filters: Mapping[str, Any],
+        etag: str | None,
     ) -> None:
         cursor = connection.execute(
             """
             UPDATE import_batches
-            SET source = ?, competence = ?, filters_json = ?
+            SET source = ?, competence = ?, filters_json = ?, etag = ?
             WHERE id = ? AND status = 'completed'
             """,
             (
                 source,
                 competence,
                 json.dumps(filters, ensure_ascii=False, sort_keys=True),
+                etag,
                 batch_id,
             ),
         )
         if cursor.rowcount != 1:
             raise ValueError(f"Lote inexistente: {batch_id}")
+
+    def get_batch_metadata(self, batch_id: str | None = None) -> dict[str, Any]:
+        with self._connection() as connection:
+            selected = self._require_batch(connection, batch_id)
+            row = connection.execute(
+                """
+                SELECT id, source, competence, filters_json, etag, imported_at
+                FROM import_batches
+                WHERE id = ? AND status = 'completed'
+                """,
+                (selected,),
+            ).fetchone()
+            competences = [
+                str(item[0])
+                for item in connection.execute(
+                    """
+                    SELECT DISTINCT competencia
+                    FROM staging_establishments
+                    WHERE batch_id = ? AND trim(competencia) <> ''
+                    ORDER BY competencia
+                    """,
+                    (selected,),
+                )
+            ]
+        if row is None:
+            raise ValueError(f"Lote inexistente: {selected}")
+        return {
+            "lote_id": str(row["id"]),
+            "fonte": str(row["source"]),
+            "competencia": (
+                row["competence"]
+                if row["competence"] is not None
+                else (competences[0] if len(competences) == 1 else competences or None)
+            ),
+            "filtros": json.loads(row["filters_json"]),
+            "etag": row["etag"],
+            "importado_em": str(row["imported_at"]),
+        }
 
     def activate_batch(self, batch_id: str) -> None:
         timestamp = datetime.now(UTC).isoformat()
@@ -838,6 +922,10 @@ class SQLiteCNESRepository:
         if (value := filters.get("max_leitos")) is not None:
             clauses.append("leitos_existentes <= ?")
             params.append(int(value))
+        if cnes_list := filters.get("cnes_list"):
+            values = [str(value) for value in cnes_list]
+            clauses.append(f"cnes IN ({', '.join('?' for _ in values)})")
+            params.extend(values)
         return clauses, params
 
     def aggregate(

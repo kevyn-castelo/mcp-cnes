@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from mcp_cnes.domain.models import HospitalInfo, ImportBatch, LoadSummary
+from mcp_cnes.domain.models import HospitalInfo, HospitalInfoV2, ImportBatch, LoadSummary
 from mcp_cnes.domain.remote import (
     RemoteCompetenceResult,
     RemoteFetchRequest,
@@ -89,6 +89,7 @@ class CNESCatalogRepository(CNESRepository, Protocol):
         source: str,
         competence: str | None,
         filters: Mapping[str, Any],
+        etag: str | None = None,
     ) -> str: ...
 
     def update_batch_metadata(
@@ -97,7 +98,10 @@ class CNESCatalogRepository(CNESRepository, Protocol):
         source: str,
         competence: str | None,
         filters: Mapping[str, Any],
+        etag: str | None = None,
     ) -> None: ...
+
+    def get_batch_metadata(self, batch_id: str | None = None) -> Mapping[str, Any]: ...
 
     def activate_batch(self, batch_id: str) -> None: ...
 
@@ -127,6 +131,61 @@ class CNESCatalogRepository(CNESRepository, Protocol):
         limit: int,
         batch_id: str | None = None,
     ) -> tuple[Sequence[HospitalInfo], int]: ...
+
+
+class CNESColumnarRepository(CNESCatalogRepository, Protocol):
+    """Extensão colunar para registrar Parquet e consultar o contrato v2."""
+
+    def register_parquet_batch(
+        self,
+        parquet_path: Path,
+        *,
+        source_file: str,
+        source: str,
+        competence: str,
+        filters: Mapping[str, Any],
+        records: int,
+        etag: str | None,
+        contract_version: str,
+        resource_version: str | None,
+    ) -> str: ...
+
+    def advanced_search_v2(
+        self,
+        filters: Mapping[str, Any],
+        order_by: str,
+        offset: int,
+        limit: int,
+        batch_id: str | None = None,
+    ) -> tuple[Sequence[HospitalInfoV2], int]: ...
+
+    def group_by_maintainer(
+        self,
+        filters: Mapping[str, Any],
+        limit: int,
+        batch_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def lead_triggers(
+        self,
+        competence_a: str,
+        competence_b: str,
+        delta_min: int,
+        establishment_type: str | None = None,
+        batch_a: str | None = None,
+        batch_b: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def score_leads(
+        self,
+        competence_a: str,
+        competence_b: str,
+        weights: Mapping[str, float],
+        filters: Mapping[str, Any],
+        limit: int,
+        batch_a: str | None = None,
+        batch_b: str | None = None,
+    ) -> dict[str, Any]: ...
 
 
 class CNESImporter(Protocol):
@@ -166,4 +225,6 @@ class DatasetExporter(Protocol):
         format: str,
         destination: Path | None,
         basename: str,
+        metadata: Mapping[str, Any] | None = None,
+        output_profile: str | None = None,
     ) -> tuple[Path, int]: ...

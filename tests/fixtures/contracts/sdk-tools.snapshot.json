@@ -1,8 +1,12 @@
 [
   {
     "name": "cnes_load_data",
-    "input_properties": ["filepath"],
-    "input_required": ["filepath"],
+    "input_properties": [
+      "filepath"
+    ],
+    "input_required": [
+      "filepath"
+    ],
     "output_properties": [
       "success",
       "lote_id",
@@ -14,12 +18,25 @@
       "motivos_rejeicao",
       "mensagem"
     ],
-    "sha256": "a613d80bc51b40006e95db6089e4165182287e41f06db4c99f17d59ee2fadbf4"
+    "sha256": "1b6b6c97cafb3916182ac6cd8d82e4d1121c1b78cd328b3f0d84033180685680"
   },
   {
     "name": "cnes_search_municipio",
-    "input_properties": ["municipio", "limit", "min_leitos", "max_leitos"],
-    "input_required": ["municipio"],
+    "input_properties": [
+      "municipio",
+      "limit",
+      "min_leitos",
+      "max_leitos",
+      "uf",
+      "tipo_estabelecimento",
+      "natureza_juridica",
+      "gestao",
+      "convenio_sus",
+      "order_by"
+    ],
+    "input_required": [
+      "municipio"
+    ],
     "output_properties": [
       "municipio",
       "total_encontrados",
@@ -27,19 +44,40 @@
       "filtros_leitos",
       "estabelecimentos"
     ],
-    "sha256": "2beb73144271c305b58df7b03e886803b569028ebd638c00270eb08c1d89c786"
+    "sha256": "e1a6b403294a17cb62a0f0682fbf3147b99721403101fa3af2c179fb6bf817a7"
   },
   {
     "name": "cnes_search_cnes",
-    "input_properties": ["cnes"],
-    "input_required": ["cnes"],
-    "output_properties": ["encontrado", "estabelecimento", "mensagem"],
-    "sha256": "1e7e9c205d67344d14a8637a6a2ff6cb6ec1682bfe7130021d80143c2c0e678b"
+    "input_properties": [
+      "cnes"
+    ],
+    "input_required": [
+      "cnes"
+    ],
+    "output_properties": [
+      "encontrado",
+      "estabelecimento",
+      "mensagem"
+    ],
+    "sha256": "6395958a9589ec6fe2aba1a8814cd702bdc8050190227ea34d0a8ba63c505a3e"
   },
   {
     "name": "cnes_search_uf",
-    "input_properties": ["uf", "limit", "min_leitos", "max_leitos"],
-    "input_required": ["uf"],
+    "input_properties": [
+      "uf",
+      "limit",
+      "min_leitos",
+      "max_leitos",
+      "municipio",
+      "tipo_estabelecimento",
+      "natureza_juridica",
+      "gestao",
+      "convenio_sus",
+      "order_by"
+    ],
+    "input_required": [
+      "uf"
+    ],
     "output_properties": [
       "uf",
       "total_encontrados",
@@ -47,7 +85,7 @@
       "filtros_leitos",
       "estabelecimentos"
     ],
-    "sha256": "bf0a298b9581c1e0ce0c7c27ffe39e659c73761fe876d3cb50d7027a7baa7fe5"
+    "sha256": "9ae93abdb9f02797741d74b5e03c578c5f0ec780fd49c9032cc8aae228a28cdc"
   },
   {
     "name": "cnes_statistics",
@@ -61,13 +99,19 @@
       "ultima_atualizacao",
       "arquivo_fonte"
     ],
-    "sha256": "366e06ffa3081e8012496558d9df188e6ada29cd54047a4cdcfe537c3b36cea9"
+    "sha256": "5af753ee72f2d3be4e4d920a956280464f788540e820d66f7418649d9cc59398"
   },
   {
     "name": "cnes_download_instructions",
     "input_properties": [],
     "input_required": [],
-    "output_properties": ["titulo", "url", "passos", "colunas_disponiveis", "apos_download"],
-    "sha256": "04aedc2945f5d8c20a780b6904da1880bf43f3c09d842d3fb4587e3519e4ac5b"
+    "output_properties": [
+      "titulo",
+      "url",
+      "passos",
+      "colunas_disponiveis",
+      "apos_download"
+    ],
+    "sha256": "a7a857495f4995481cadcd311fdca39df3c7b4424c42cffaf6101b75c27436f1"
   }
 ]

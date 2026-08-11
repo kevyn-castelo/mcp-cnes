@@ -10,9 +10,9 @@ como baseline de paridade e não deve ser usado como rollback por clientes MCP.
 | Ferramenta | Descrição |
 |---|---|
 | `cnes_load_data` | Carrega um CSV exportado do dashboard CNES |
-| `cnes_search_municipio` | Busca estabelecimentos por município |
+| `cnes_search_municipio` | Busca por município com filtros canônicos e ordenação |
 | `cnes_search_cnes` | Busca um estabelecimento pelo código CNES |
-| `cnes_search_uf` | Busca estabelecimentos por UF |
+| `cnes_search_uf` | Busca por UF com filtros canônicos e ordenação |
 | `cnes_statistics` | Retorna estatísticas dos dados carregados |
 | `cnes_download_instructions` | Explica como obter o CSV manualmente |
 | `cnes_list_sources` / `cnes_list_competencias` | Descobre a fonte oficial e as competências `YYYYMM` de um ano por chamada |
@@ -20,7 +20,11 @@ como baseline de paridade e não deve ser usado como rollback por clientes MCP.
 | `cnes_normalize` / `cnes_validate_dataset` | Normaliza CSV local e verifica qualidade do lote |
 | `cnes_list_lotes` / `cnes_use_lote` / `cnes_purge` | Gerencia histórico, lote ativo e cache |
 | `cnes_aggregate` / `cnes_timeseries` / `cnes_diff` | Executa análises sobre lotes retidos |
-| `cnes_search_advanced` / `cnes_export` | Combina filtros e exporta CSV, JSON ou XLSX |
+| `cnes_search_advanced` / `cnes_export` | Combina filtros e exporta recortes auditáveis em CSV, JSON, JSONL ou XLSX |
+| `cnes_search_advanced_v2` | Consulta dados institucionais, geolocalização qualificada e leitos desagregados da base completa |
+| `cnes_group_by_mantenedora` | Consolida unidades, leitos, distribuição por UF e mix SUS por CNPJ mantenedora |
+| `cnes_leads_triggers` | Detecta expansão, retração, entrada e saída entre duas competências retidas |
+| `cnes_score_leads` | Calcula score comercial decomposto com pesos integralmente informados na chamada |
 
 ## Fluxo remoto e fluxo manual
 
@@ -30,14 +34,55 @@ informe `ano` para consultar um ano específico. A resposta inclui `ano_consulta
 e somente competências desse ano, evitando baixar todo o histórico. A tool descobre
 o arquivo no catálogo oficial, aplica os
 filtros localmente, gera um CSV canônico e, por padrão, carrega o resultado como
-lote ativo. A resposta informa a fonte, cache, campos derivados e quais filtros
+lote ativo. A resposta informa a fonte, cache do artefato anual, campos derivados e quais filtros
 foram nativos ou locais.
+
+Os arquivos anuais são armazenados por `(fonte, ano)`. Trocar município ou outro
+filtro local no mesmo ano reaproveita o download; anos ainda abertos são
+revalidados por ETag com requisição condicional.
 
 O fluxo anterior continua disponível: obtenha as instruções com
 `cnes_download_instructions` e carregue um CSV aprovado com `cnes_load_data`.
-As seis tools históricas mantêm assinaturas e schemas congelados; elas sempre
-consultam o lote ativo. Para consultar outro lote sem alterar seus contratos, use
-`cnes_use_lote` antes da busca.
+As seis tools históricas mantêm os schemas de saída v1; novos parâmetros são
+aditivos. As 19 tools declaram `x-cnes-contract-version: v1` no input schema e
+consultam o lote ativo. Para consultar outro lote, use `cnes_use_lote` antes da
+busca.
+
+As buscas simples aceitam `tipo_estabelecimento`, `natureza_juridica`, `gestao`,
+`convenio_sus`, faixa de leitos e `order_by`. O default ordena
+`leitos_existentes` de forma decrescente. `cnes_export` aceita `cnes_list`,
+`limit`, `offset` e `order_by`; CSV, JSON e JSONL recebem proveniência por registro
+e XLSX recebe a aba `_metadados`. Com `perfil_saida="crm_generico"`, o export usa
+o contrato v2 e inclui `chave_deduplicacao` no formato `cnes:cnpj`.
+
+Para o contrato aditivo `v2`, selecione `fonte="datasus_base_completa"` em
+`cnes_fetch`. O servidor baixa o ZIP mensal oficial, projeta somente pessoa
+jurídica e campos institucionais, grava o lote como Parquet e o consulta com
+DuckDB. As 19 tools anteriores continuam declaradas como `v1`; as quatro tools
+comerciais (`cnes_search_advanced_v2`, agrupamento, gatilhos e score) declaram e
+retornam `v2`. `cnes_export` mantém `v1` por padrão e anuncia suporte a `v1`/`v2`.
+
+O `v2` acrescenta razão social, CNPJ, CNPJ mantenedora, endereço, telefone,
+e-mail, coordenadas com `geo_confiavel` e leitos de UTI adulto/pediátrica/
+neonatal, cirúrgicos, clínicos, obstétricos e complementares, além das
+habilitações ativas do estabelecimento. Quantidades de leitos ausentes ou
+inválidas permanecem nulas nos campos v2 e são enumeradas em `campos_ausentes`;
+o valor legado v1 permanece compatível. CPF e nomes de pessoa física não entram
+no pipeline nem nos schemas públicos.
+
+O score não contém pesos implícitos: `porte`, `complexidade`, `mix_pagador` e
+`tendencia` devem ser informados, e o retorno mostra cada dimensão e o total.
+Complexidade é a média documentada dos percentis de leitos de UTI e quantidade
+de habilitações ativas; os dois componentes também são retornados separadamente.
+Gatilhos e score retornam `lote_a`/`lote_b` e aceitam esses identificadores como
+parâmetros opcionais. Quando há mais de um lote v2 da mesma competência, a chamada
+deve informar os lotes para evitar comparar recortes ambíguos. `delta_min` vale
+igualmente para expansão, retração, entrada e saída. Diferenças nos filtros de
+origem são devolvidas em `avisos` também no score.
+
+`cnes_validate_dataset` considera inválido um registro em que `leitos_sus` excede
+`leitos_existentes`. Nesse caso, o agrupamento por mantenedora mantém os totais,
+mas retorna os mixes como nulos e inclui um alerta explícito.
 
 Detalhes e limitações das integrações estão em [docs/fontes.md](docs/fontes.md).
 

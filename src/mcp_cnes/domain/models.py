@@ -29,6 +29,37 @@ class HospitalInfo:
         return asdict(self)
 
 
+@dataclass
+class HospitalInfoV2(HospitalInfo):
+    """Contrato comercial aditivo; nunca inclui dados de pessoa física."""
+
+    razao_social: str | None = None
+    cnpj: str | None = None
+    cnpj_mantenedora: str | None = None
+    tipo_pessoa: str | None = None
+    nivel_dependencia: str | None = None
+    logradouro: str | None = None
+    numero: str | None = None
+    complemento: str | None = None
+    bairro: str | None = None
+    cep: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    geo_confiavel: bool = False
+    telefone: str | None = None
+    email: str | None = None
+    leitos_uti_adulto: int | None = None
+    leitos_uti_pediatrica: int | None = None
+    leitos_uti_neonatal: int | None = None
+    leitos_cirurgicos: int | None = None
+    leitos_clinicos: int | None = None
+    leitos_obstetricos: int | None = None
+    leitos_complementares: int | None = None
+    habilitacoes: tuple[str, ...] = ()
+    total_habilitacoes: int = 0
+    campos_ausentes: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True)
 class RejectionReason:
     """Motivo agregado sem reter o conteudo sensivel da linha rejeitada."""
