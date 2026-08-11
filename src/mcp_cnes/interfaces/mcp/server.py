@@ -946,14 +946,21 @@ def create_mcp_server(
 
         values = filtros.model_dump(exclude_none=True) if filtros else {}
         result = group_by_maintainer.execute(values, limit, lote_id)
+        missing_maintainers = result["unidades_sem_cnpj_mantenedora"]
         return MaintainerGroupsOutput(
             total_retornado=len(result["redes"]),
             lote_id=result["lote_id"],
+            unidades_sem_cnpj_mantenedora=missing_maintainers,
             redes=[MaintainerGroupOutput.model_validate(item) for item in result["redes"]],
             avisos=[
                 "A base mensal informa o CNPJ da mantenedora, mas não publica seu nome; "
                 "rede permanece nulo."
-            ],
+            ]
+            + (
+                [f"{missing_maintainers} unidade(s) sem CNPJ da mantenedora foram omitidas."]
+                if missing_maintainers
+                else []
+            ),
         )
 
     @server.tool(name="cnes_leads_triggers", structured_output=True)
@@ -1012,7 +1019,13 @@ def create_mcp_server(
                 "tendencia: posição acumulada do delta de leitos entre as competências",
                 "total: média ponderada somente das dimensões disponíveis",
             ],
-            campos_ausentes=[],
+            campos_ausentes=sorted(
+                {
+                    field
+                    for lead in result["leads"]
+                    for field in lead["campos_ausentes"]
+                }
+            ),
             avisos=result["avisos"],
         )
 
