@@ -13,6 +13,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dependency-security:
+    name: Audit locked runtime dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.12.1"
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Export locked runtime requirements
+        run: >-
+          uv export --locked --no-dev --no-editable --no-emit-project
+          --format requirements.txt --output-file "$RUNNER_TEMP/requirements.txt"
+
+      - name: Audit dependencies with pip-audit
+        run: >-
+          uvx --from "pip-audit==2.10.1" pip-audit
+          --requirement "$RUNNER_TEMP/requirements.txt"
+          --format json --progress-spinner off
+
   quality:
     name: Ruff, Pyright and pytest
     runs-on: ubuntu-latest

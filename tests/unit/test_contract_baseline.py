@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from mcp_cnes.infrastructure.config import Settings
 from mcp_server import MCPServer
 
 FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "contracts"
@@ -43,12 +44,18 @@ def test_tool_contract_matches_baseline() -> None:
 @pytest.mark.asyncio
 async def test_example_responses_match_baseline() -> None:
     fixture = load_fixture("examples.json")
-    server = MCPServer()
+    repository_root = Path(__file__).parents[2]
+    server = MCPServer(
+        settings=Settings(
+            data_dir=repository_root,
+            allowed_csv_files=("sample_data.csv",),
+        )
+    )
 
     for example in fixture:
         arguments = dict(example["arguments"])
         if example["tool"] == "cnes_load_data":
-            arguments["filepath"] = str(Path(__file__).parents[2] / arguments["filepath"])
+            arguments["filepath"] = str(repository_root / arguments["filepath"])
 
         actual = await server.call_tool(example["tool"], arguments)
         for dynamic_field, replacement in example.get("normalize", {}).items():
