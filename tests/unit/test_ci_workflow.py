@@ -18,7 +18,8 @@ def test_pull_request_and_main_workflow_run_locked_quality_gates() -> None:
     assert "tests/unit/test_mcp_sdk_contract.py" in workflow
     assert "--cov=mcp_cnes.domain --cov=mcp_cnes.application" in workflow
     assert "--cov-fail-under=80" in workflow
-    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow
+    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" not in workflow
     assert "astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b" in workflow
     assert "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10" in workflow
     assert "actions/checkout@v6" not in workflow
