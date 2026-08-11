@@ -10,12 +10,12 @@ def test_pull_request_and_main_workflow_run_locked_quality_gates() -> None:
     assert "push:\n    branches: [main]" in workflow
     assert "permissions:\n  contents: read" in workflow
     assert "uv sync --locked" in workflow
-    assert "uv run ruff check src tests mcp_server.py benchmarks" in workflow
+    assert "uv run ruff check src tests benchmarks" in workflow
     assert "uv run pyright" in workflow
     assert "Unit tests" in workflow
     assert "Integration tests" in workflow
     assert "Contract tests" in workflow
-    assert "tests/contract" in workflow
+    assert "tests/unit/test_mcp_sdk_contract.py" in workflow
     assert "--cov=mcp_cnes.domain --cov=mcp_cnes.application" in workflow
     assert "--cov-fail-under=80" in workflow
     assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow

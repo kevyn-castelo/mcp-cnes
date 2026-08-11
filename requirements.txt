@@ -1,3 +1,0 @@
-# Arquivo mantido apenas para sinalizar a migração.
-# A fonte canônica de dependências é pyproject.toml + uv.lock.
-# Instalação reproduzível: uv sync --locked

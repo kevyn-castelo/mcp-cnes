@@ -278,12 +278,3 @@ async def test_playwright_stops_manager_when_browser_launch_fails(tmp_path: Path
 
     assert raised.value.stage == "launch_browser"
     assert manager.stopped is True
-
-
-def test_legacy_playwright_path_also_uses_page_download_event() -> None:
-    legacy = (Path(__file__).parents[2] / "cnes_playwright_collector.py").read_text(
-        encoding="utf-8"
-    )
-
-    assert "self.page.expect_download()" in legacy
-    assert "self.context.expect_download()" not in legacy

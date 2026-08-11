@@ -15,7 +15,6 @@ dependencies = [
     "pandas>=2.0,<4",
     "pydantic>=2.11,<3",
     "requests>=2.31,<3",
-    "tqdm>=4.66,<5",
 ]
 
 [project.scripts]

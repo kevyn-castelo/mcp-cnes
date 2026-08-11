@@ -4,7 +4,7 @@ import pytest
 
 from mcp_cnes.domain.errors import ConfigurationError
 from mcp_cnes.infrastructure.config import Settings, load_settings
-from mcp_server import MCPServer
+from mcp_cnes.interfaces.mcp import create_mcp_server
 
 
 def test_settings_externalize_runtime_values() -> None:
@@ -75,4 +75,4 @@ def test_invalid_environment_fails_during_server_bootstrap(
     monkeypatch.setenv("MCP_CNES_REQUEST_TIMEOUT", "zero")
 
     with pytest.raises(ConfigurationError, match="MCP_CNES_REQUEST_TIMEOUT deve ser um inteiro"):
-        MCPServer()
+        create_mcp_server()

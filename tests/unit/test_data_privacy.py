@@ -3,7 +3,7 @@ from pathlib import Path
 
 def test_production_queries_and_exports_do_not_collect_professional_cns() -> None:
     root = Path(__file__).parents[2]
-    production_files = [root / "cnes_scraper.py", *(root / "src").rglob("*.py")]
+    production_files = list((root / "src").rglob("*.py"))
 
     violations = [
         str(path.relative_to(root))

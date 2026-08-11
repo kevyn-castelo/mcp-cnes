@@ -370,7 +370,7 @@ uv run pytest tests/unit tests/integration -m "not live" `
   --cov-report=term-missing
 
 # Contratos do SDK MCP
-uv run pytest tests/unit/test_mcp_sdk_contract.py tests/contract -m "not live"
+uv run pytest tests/unit/test_mcp_sdk_contract.py -m "not live"
 
 # Artefatos de distribuição
 uv build
