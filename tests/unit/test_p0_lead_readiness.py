@@ -122,7 +122,7 @@ async def test_export_explicit_cnes_slice_has_exact_rows_and_provenance(
         )
 
     assert csv_result.structured_content["registros"] == 10
-    with Path(csv_result.structured_content["filepath"]).open(
+    with (tmp_path / "exports" / csv_result.structured_content["filepath"]).open(
         encoding="utf-8", newline=""
     ) as handle:
         rows = list(csv.DictReader(handle))
@@ -137,11 +137,16 @@ async def test_export_explicit_cnes_slice_has_exact_rows_and_provenance(
     assert metadata["_extraido_em"]
 
     sliced = json.loads(
-        Path(sliced_result.structured_content["filepath"]).read_text(encoding="utf-8")
+        (tmp_path / "exports" / sliced_result.structured_content["filepath"]).read_text(
+            encoding="utf-8"
+        )
     )
     assert [item["cnes"] for item in sliced] == ["0000003", "0000004", "0000005"]
 
-    workbook = load_workbook(Path(xlsx_result.structured_content["filepath"]), read_only=True)
+    workbook = load_workbook(
+        tmp_path / "exports" / xlsx_result.structured_content["filepath"],
+        read_only=True,
+    )
     try:
         assert workbook.sheetnames == ["CNES", "_metadados"]
         values = {
@@ -197,7 +202,11 @@ async def test_export_freezes_active_batch_before_streaming_pages(tmp_path: Path
     async with Client(server) as client:
         result = await client.call_tool("cnes_export", {"formato": "json", "limit": 2})
 
-    rows = json.loads(Path(result.structured_content["filepath"]).read_text(encoding="utf-8"))
+    rows = json.loads(
+        (tmp_path / "exports" / result.structured_content["filepath"]).read_text(
+            encoding="utf-8"
+        )
+    )
     assert [row["cnes"] for row in rows] == ["0000001", "0000002"]
     assert rows[0]["_metadados"]["lote_id"] == "lead-batch"
     assert repository.batch_ids_used == ["lead-batch"]

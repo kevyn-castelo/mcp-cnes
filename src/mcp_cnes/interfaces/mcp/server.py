@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, ParamSpec, TypeVar, cast
 
 from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
@@ -46,7 +47,12 @@ from mcp_cnes.application.ports import (
     CNESRemoteSource,
     CNESRepository,
 )
-from mcp_cnes.domain.errors import CNESDataLoadError, CollectorError, ImportSecurityError
+from mcp_cnes.domain.errors import (
+    CNESDataLoadError,
+    CollectorError,
+    DomainValidationError,
+    ImportSecurityError,
+)
 from mcp_cnes.infrastructure.config import Settings, load_settings
 from mcp_cnes.infrastructure.exports import LocalDatasetExporter
 from mcp_cnes.infrastructure.importers import CsvCNESImporter, SecureCsvImporter
@@ -91,6 +97,11 @@ from .schemas import (
 )
 
 MAX_RESULTS_PER_CALL = 500
+PUBLIC_INTERNAL_ERROR = "Não foi possível concluir a operação solicitada."
+MAX_PUBLIC_ERROR_LENGTH = 500
+PUBLIC_ERROR_MARKER = "mcp_cnes_public_error_v1"
+P = ParamSpec("P")
+T = TypeVar("T")
 TOOL_ARGUMENTS = {
     "cnes_load_data": frozenset({"filepath"}),
     "cnes_search_municipio": frozenset(
@@ -145,7 +156,7 @@ TOOL_ARGUMENTS = {
     "cnes_validate_dataset": frozenset({"lote_id"}),
     "cnes_list_lotes": frozenset(),
     "cnes_use_lote": frozenset({"lote_id"}),
-    "cnes_purge": frozenset({"lote_id"}),
+    "cnes_purge": frozenset({"lote_id", "confirmacao"}),
     "cnes_aggregate": frozenset({"group_by", "metrica", "filtros", "lote_id"}),
     "cnes_timeseries": frozenset({"chave", "tipo_chave", "de", "ate"}),
     "cnes_diff": frozenset({"lote_a", "lote_b"}),
@@ -197,6 +208,131 @@ SearchOrder = Annotated[
 ]
 
 
+def _sanitize_public_text(message: str, *, fallback: str = PUBLIC_INTERNAL_ERROR) -> str:
+    """Limita e remove detalhes de infraestrutura de mensagens públicas."""
+
+    collapsed = " ".join(message.split())
+    if not collapsed:
+        return fallback
+    collapsed = re.sub(
+        r"(?i)\b(https?://)[^/\s@]+@",
+        r"\1[credenciais omitidas]@",
+        collapsed,
+    )
+    collapsed = re.sub(
+        r'''(?i)["'](?:[A-Z]:[\\/]|/|\\\\)[^"']+["']''',
+        "[caminho omitido]",
+        collapsed,
+    )
+    collapsed = re.sub(
+        r"(?i)\b[A-Z]:[\\/][^:;,]+",
+        "[caminho omitido]",
+        collapsed,
+    )
+    collapsed = re.sub(
+        r"(?<![:/\w])/(?!/)[^:;,]+",
+        "[caminho omitido]",
+        collapsed,
+    )
+    collapsed = re.sub(
+        r"\\\\[^:;,]+",
+        "[caminho omitido]",
+        collapsed,
+    )
+    sensitive_markers = (
+        "traceback (most recent call last)",
+        "file \"",
+        "duckdb.",
+        "sqlite3.",
+        "binder error",
+        "catalog error",
+        "database error",
+        "operationalerror",
+        "integrityerror",
+        "select * from",
+        "insert into",
+    )
+    if any(marker in collapsed.casefold() for marker in sensitive_markers):
+        return fallback
+    if len(collapsed) > MAX_PUBLIC_ERROR_LENGTH:
+        return collapsed[: MAX_PUBLIC_ERROR_LENGTH - 1].rstrip() + "…"
+    return collapsed
+
+
+def _public_error_text(
+    cause: str,
+    *,
+    code: str = "invalid_request",
+    suggestion: str = "Revise os parâmetros informados e tente novamente.",
+    include_marker: bool = False,
+) -> str:
+    public_cause = _sanitize_public_text(cause)
+    public_code = code if re.fullmatch(r"[a-z0-9_]{1,64}", code) else "invalid_request"
+    if public_cause == PUBLIC_INTERNAL_ERROR:
+        public_code = "internal_error"
+    payload = {
+        "erro": public_code,
+        "causa": public_cause,
+        "sugestao": _sanitize_public_text(
+            suggestion,
+            fallback="Revise os parâmetros informados e tente novamente.",
+        ),
+    }
+    if include_marker:
+        payload["_mcp_cnes_public_error"] = PUBLIC_ERROR_MARKER
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+class PublicToolError(ValueError):
+    """Erro deliberadamente seguro para publicação na fronteira MCP."""
+
+    def __init__(
+        self,
+        cause: str,
+        *,
+        code: str = "invalid_request",
+        suggestion: str = "Revise os parâmetros informados e tente novamente.",
+    ) -> None:
+        super().__init__(
+            _public_error_text(
+                cause,
+                code=code,
+                suggestion=suggestion,
+                include_marker=True,
+            )
+        )
+
+
+def _execute_public(
+    operation: Callable[..., T], /, *args: Any, **kwargs: Any
+) -> T:
+    """Publica somente validações tipadas do contrato da aplicação."""
+
+    try:
+        return operation(*args, **kwargs)
+    except DomainValidationError as exc:
+        raise PublicToolError(str(exc)) from None
+
+
+def _guard_tool(operation: Callable[P, T]) -> Callable[P, T]:
+    """Converte falhas não classificadas antes que o SDK forme a resposta MCP."""
+
+    @wraps(operation)
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return operation(*args, **kwargs)
+        except PublicToolError:
+            raise
+        except Exception:
+            raise PublicToolError(
+                PUBLIC_INTERNAL_ERROR,
+                code="internal_error",
+                suggestion="Tente novamente; se o problema persistir, contate o operador.",
+            ) from None
+
+    return cast(Callable[P, T], guarded)
+
+
 def _structured_error_text(message: str, *, code: str = "invalid_request") -> str:
     start = message.find("{")
     if start >= 0:
@@ -205,31 +341,30 @@ def _structured_error_text(message: str, *, code: str = "invalid_request") -> st
         except json.JSONDecodeError:
             pass
         else:
-            if isinstance(existing, dict) and {
-                "erro",
-                "causa",
-                "sugestao",
-            }.issubset(existing):
-                return json.dumps(existing, ensure_ascii=False, sort_keys=True)
-    prefix = "Error executing tool "
-    cause = message
-    if message.startswith(prefix) and ": " in message:
-        cause = message.split(": ", 1)[1]
-    return json.dumps(
-        {
-            "erro": code,
-            "causa": cause,
-            "sugestao": "Revise os parâmetros informados e tente novamente.",
-        },
-        ensure_ascii=False,
-        sort_keys=True,
+            if (
+                isinstance(existing, dict)
+                and existing.get("_mcp_cnes_public_error") == PUBLIC_ERROR_MARKER
+                and {"erro", "causa", "sugestao"}.issubset(existing)
+            ):
+                public_code = str(existing["erro"])
+                if not re.fullmatch(r"[a-z0-9_]{1,64}", public_code):
+                    public_code = code
+                return _public_error_text(
+                    str(existing["causa"]),
+                    code=public_code,
+                    suggestion=str(existing["sugestao"]),
+                )
+    return _public_error_text(
+        PUBLIC_INTERNAL_ERROR,
+        code="internal_error",
+        suggestion="Tente novamente; se o problema persistir, contate o operador.",
     )
 
 
 def _tool_error(message: str, *, code: str = "invalid_request") -> CallToolResult:
     return CallToolResult(
         is_error=True,
-        content=[TextContent(type="text", text=_structured_error_text(message, code=code))],
+        content=[TextContent(type="text", text=_public_error_text(message, code=code))],
     )
 
 
@@ -262,13 +397,40 @@ class StrictToolArgumentsMiddleware:
                             "Corrija o código e tente novamente.",
                             code="invalid_cnes",
                         )
+                if tool_name in {"cnes_search_municipio", "cnes_search_uf"}:
+                    uf = arguments.get("uf")
+                    if isinstance(uf, str) and not re.fullmatch(r"[A-Za-z]{2}", uf):
+                        return _tool_error(
+                            "uf deve conter exatamente duas letras.",
+                            code="invalid_uf",
+                        )
+                    limit = arguments.get("limit")
+                    if isinstance(limit, int) and not 1 <= limit <= MAX_RESULTS_PER_CALL:
+                        return _tool_error(
+                            "limit deve estar entre 1 e 500.",
+                            code="invalid_limit",
+                        )
+                    for field in ("min_leitos", "max_leitos"):
+                        beds = arguments.get(field)
+                        if isinstance(beds, int) and beds < 0:
+                            return _tool_error(
+                                f"{field} deve ser maior ou igual a zero.",
+                                code="invalid_bed_range",
+                            )
 
         try:
             result = await call_next(ctx)
-        except Exception as exc:
+        except PublicToolError as exc:
+            return CallToolResult(
+                is_error=True,
+                content=[TextContent(type="text", text=_structured_error_text(str(exc)))],
+            )
+        except ValueError:
+            return _tool_error(PUBLIC_INTERNAL_ERROR, code="internal_error")
+        except Exception:
             return _tool_error(
-                str(exc),
-                code=("invalid_request" if isinstance(exc, ValueError) else "internal_error"),
+                PUBLIC_INTERNAL_ERROR,
+                code="internal_error",
             )
         if ctx.method == "tools/call":
             is_error = (
@@ -316,7 +478,9 @@ class StrictToolArgumentsMiddleware:
 
 def _require_data(repository: CNESRepository) -> None:
     if not repository.has_data():
-        raise ValueError("Dados não carregados. Chame cnes_load_data antes de consultar.")
+        raise PublicToolError(
+            "Dados não carregados. Chame cnes_load_data antes de consultar."
+        )
 
 
 def _safe_load_error(error: CNESDataLoadError) -> str:
@@ -325,6 +489,19 @@ def _safe_load_error(error: CNESDataLoadError) -> str:
     if message in safe_messages:
         return f"{message}. Corrija o arquivo e tente novamente."
     return "Não foi possível ler o CSV informado. Verifique o formato e as permissões."
+
+
+def _public_remote_cause(error: CollectorError) -> str:
+    causes = {
+        "remote_competence_not_found": "A competência solicitada não foi encontrada na fonte oficial.",
+        "remote_competence_unavailable": "A fonte oficial não possui competências para o período solicitado.",
+        "remote_server_error": "A fonte remota está temporariamente indisponível.",
+        "remote_rate_limited": "A fonte remota limitou temporariamente as solicitações.",
+        "remote_destination_not_allowed": (
+            "O destino deve permanecer dentro do diretório remoto configurado."
+        ),
+    }
+    return causes.get(error.code, "Não foi possível consultar a fonte remota.")
 
 
 def _raise_remote_error(error: CollectorError) -> None:
@@ -338,13 +515,36 @@ def _raise_remote_error(error: CollectorError) -> None:
     }
     payload = {
         "erro": error.code,
-        "causa": str(error),
+        "causa": _public_remote_cause(error),
         "sugestao": suggestions.get(
             error.code,
             "Verifique a disponibilidade da fonte e os parâmetros informados.",
         ),
     }
-    raise ValueError(json.dumps(payload, ensure_ascii=False, sort_keys=True)) from None
+    raise PublicToolError(
+        payload["causa"],
+        code=payload["erro"],
+        suggestion=payload["sugestao"],
+    ) from None
+
+
+def _public_file_reference(path: Path, root: Path) -> str:
+    """Retorna uma referência relativa sem revelar a estrutura do host."""
+
+    resolved = path.resolve(strict=False)
+    base = root.resolve(strict=False)
+    try:
+        relative = resolved.relative_to(base)
+    except ValueError:
+        return path.name
+    reference = relative.as_posix()
+    return reference if reference and reference != "." else path.name
+
+
+def _public_source_reference(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return Path(value).name
 
 
 def create_mcp_server(
@@ -402,7 +602,7 @@ def create_mcp_server(
             return runtime_remote_sources[selected]
         except KeyError:
             available = ", ".join(sorted(runtime_remote_sources))
-            raise ValueError(
+            raise PublicToolError(
                 f"fonte desconhecida: {selected}. Fontes disponíveis: {available}."
             ) from None
 
@@ -438,6 +638,7 @@ def create_mcp_server(
     )
 
     @server.tool(name="cnes_load_data", structured_output=True)
+    @_guard_tool
     def cnes_load_data(
         filepath: Annotated[
             str,
@@ -449,9 +650,11 @@ def create_mcp_server(
         try:
             summary = load_data.execute(Path(filepath))
         except ImportSecurityError as exc:
-            raise ValueError(f"{exc}. Verifique filepath e a politica configurada.") from None
+            raise PublicToolError(
+                f"{exc}. Verifique filepath e a politica configurada."
+            ) from None
         except CNESDataLoadError as exc:
-            raise ValueError(_safe_load_error(exc)) from None
+            raise PublicToolError(_safe_load_error(exc)) from None
         if summary.batch_id is None:
             raise RuntimeError("A persistencia nao retornou a identidade do lote")
         return LoadDataOutput(
@@ -467,6 +670,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_search_municipio", structured_output=True)
+    @_guard_tool
     def cnes_search_municipio(
         municipio: Annotated[
             str,
@@ -486,8 +690,9 @@ def create_mcp_server(
 
         _require_data(runtime_repository)
         if not municipio.strip():
-            raise ValueError("municipio não pode conter somente espaços.")
-        result = search_municipality.execute(
+            raise PublicToolError("municipio não pode conter somente espaços.")
+        result = _execute_public(
+            search_municipality.execute,
             municipio,
             limit,
             min_leitos,
@@ -508,6 +713,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_search_cnes", structured_output=True)
+    @_guard_tool
     def cnes_search_cnes(
         cnes: Annotated[
             str,
@@ -517,7 +723,7 @@ def create_mcp_server(
         """Busca um estabelecimento pelo código CNES de sete dígitos."""
 
         _require_data(runtime_repository)
-        result = search_cnes.execute(cnes)
+        result = _execute_public(search_cnes.execute, cnes)
         if result is None:
             return CNESSearchOutput(
                 encontrado=False,
@@ -529,6 +735,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_search_uf", structured_output=True)
+    @_guard_tool
     def cnes_search_uf(
         uf: Annotated[
             str,
@@ -552,7 +759,8 @@ def create_mcp_server(
         """Busca estabelecimentos por UF e faixa opcional de leitos."""
 
         _require_data(runtime_repository)
-        result = search_uf.execute(
+        result = _execute_public(
+            search_uf.execute,
             uf,
             limit,
             min_leitos,
@@ -573,13 +781,17 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_statistics", structured_output=True)
+    @_guard_tool
     def cnes_statistics() -> StatisticsOutput:
         """Retorna estatísticas dos dados atualmente carregados."""
 
         _require_data(runtime_repository)
-        return StatisticsOutput.model_validate(get_statistics.execute())
+        values = dict(_execute_public(get_statistics.execute))
+        values["arquivo_fonte"] = _public_source_reference(values.get("arquivo_fonte"))
+        return StatisticsOutput.model_validate(values)
 
     @server.tool(name="cnes_download_instructions", structured_output=True)
+    @_guard_tool
     def cnes_download_instructions() -> DownloadInstructionsOutput:
         """Explica como obter um CSV no dashboard oficial do CNES."""
 
@@ -611,6 +823,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_list_sources", structured_output=True)
+    @_guard_tool
     def cnes_list_sources() -> SourceListOutput:
         """Lista as fontes oficiais e sua cobertura canônica observada."""
 
@@ -618,7 +831,7 @@ def create_mcp_server(
         outputs: list[SourceOutput] = []
         for source_name, source in runtime_remote_sources.items():
             try:
-                resources = ListRemoteResources(source).execute()
+                resources = _execute_public(ListRemoteResources(source).execute)
             except CollectorError as exc:
                 outputs.append(
                     SourceOutput(
@@ -627,7 +840,7 @@ def create_mcp_server(
                         campos_cobertos=[],
                         campos_derivados=[],
                         ultima_verificacao=checked_at,
-                        observacoes=[exc.code, str(exc)],
+                        observacoes=[exc.code, _public_remote_cause(exc)],
                     )
                 )
                 continue
@@ -688,6 +901,7 @@ def create_mcp_server(
         return SourceListOutput(fontes=outputs)
 
     @server.tool(name="cnes_list_competencias", structured_output=True)
+    @_guard_tool
     def cnes_list_competencias(
         fonte: Annotated[
             str | None,
@@ -702,7 +916,7 @@ def create_mcp_server(
 
         source = select_remote_source(fonte)
         try:
-            result = ListRemoteCompetences(source).execute(ano)
+            result = _execute_public(ListRemoteCompetences(source).execute, ano)
         except CollectorError as exc:
             _raise_remote_error(exc)
         return CompetenceListOutput(
@@ -714,6 +928,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_fetch", structured_output=True)
+    @_guard_tool
     def cnes_fetch(
         competencia: Annotated[
             str,
@@ -755,7 +970,8 @@ def create_mcp_server(
             repository=catalog_repository,
         )
         try:
-            result = fetch_remote_data.execute(
+            result = _execute_public(
+                fetch_remote_data.execute,
                 competence=competencia,
                 uf=uf,
                 municipality=municipio,
@@ -771,7 +987,9 @@ def create_mcp_server(
         except CollectorError as exc:
             _raise_remote_error(exc)
         return RemoteFetchOutput(
-            filepath=str(result.fetch.filepath),
+            filepath=_public_file_reference(
+                result.fetch.filepath, runtime_settings.remote_dir
+            ),
             lote_id=result.batch_id,
             registros=result.fetch.records,
             filtros_nativos=list(result.fetch.native_filters),
@@ -784,6 +1002,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_validate_dataset", structured_output=True)
+    @_guard_tool
     def cnes_validate_dataset(
         lote_id: Annotated[
             str | None,
@@ -792,39 +1011,77 @@ def create_mcp_server(
     ) -> DatasetValidationOutput:
         """Verifica completude, duplicidade, competências e leitos de um lote."""
 
-        return DatasetValidationOutput.model_validate(validate_dataset.execute(lote_id))
+        return DatasetValidationOutput.model_validate(
+            _execute_public(validate_dataset.execute, lote_id)
+        )
 
     @server.tool(name="cnes_list_lotes", structured_output=True)
+    @_guard_tool
     def cnes_list_lotes() -> BatchListOutput:
         """Lista lotes retidos e identifica a projeção atualmente ativa."""
 
         return BatchListOutput(
-            lotes=[BatchOutput.model_validate(item) for item in list_batches.execute()]
+            lotes=[
+                BatchOutput.model_validate(
+                    {
+                        **item,
+                        "arquivo_fonte": _public_source_reference(item["arquivo_fonte"]),
+                    }
+                )
+                for item in _execute_public(list_batches.execute)
+            ]
         )
 
     @server.tool(name="cnes_use_lote", structured_output=True)
+    @_guard_tool
     def cnes_use_lote(
         lote_id: Annotated[str, Field(min_length=1, description="Identidade do lote")],
     ) -> ActiveBatchOutput:
         """Ativa atomicamente um lote retido para as seis consultas legadas."""
 
-        use_batch.execute(lote_id)
+        _execute_public(use_batch.execute, lote_id)
         return ActiveBatchOutput(lote_id=lote_id, ativo=True)
 
     @server.tool(name="cnes_purge", structured_output=True)
+    @_guard_tool
     def cnes_purge(
         lote_id: Annotated[
             str | None,
             Field(
                 min_length=1,
+                max_length=128,
                 description="Lote a excluir; omita para limpar somente o cache remoto",
+            ),
+        ] = None,
+        confirmacao: Annotated[
+            str | None,
+            Field(
+                min_length=1,
+                max_length=160,
+                description=(
+                    "Use EXCLUIR_LOTE:<lote_id> para apagar um lote ou "
+                    "LIMPAR_CACHE para apagar somente caches remotos"
+                ),
             ),
         ] = None,
     ) -> PurgeOutput:
         """Remove um lote específico ou, sem lote_id, o cache remoto gerado."""
 
+        if not runtime_settings.allow_purge:
+            raise PublicToolError(
+                "cnes_purge está desabilitado. O operador deve definir "
+                "MCP_CNES_ALLOW_PURGE=true antes de iniciar o servidor."
+            )
+        expected_confirmation = (
+            f"EXCLUIR_LOTE:{lote_id}" if lote_id is not None else "LIMPAR_CACHE"
+        )
+        if confirmacao != expected_confirmation:
+            raise PublicToolError(
+                "Confirmação inválida para cnes_purge. "
+                f"Informe exatamente {expected_confirmation}."
+            )
         if lote_id is not None:
-            removed, released = purge_batch.execute(lote_id)
+            removed, released = _execute_public(purge_batch.execute, lote_id)
             return PurgeOutput(lote_id=lote_id, itens_removidos=removed, bytes_liberados=released)
         removed = released = 0
         for source in runtime_remote_sources.values():
@@ -836,6 +1093,7 @@ def create_mcp_server(
         return PurgeOutput(lote_id=None, itens_removidos=removed, bytes_liberados=released)
 
     @server.tool(name="cnes_aggregate", structured_output=True)
+    @_guard_tool
     def cnes_aggregate(
         group_by: Annotated[
             str,
@@ -851,7 +1109,9 @@ def create_mcp_server(
         """Agrupa estabelecimentos e leitos por dimensão canônica."""
 
         values = filtros.model_dump(exclude_none=True) if filtros else {}
-        result = aggregate_data.execute(group_by, metrica, values, lote_id)
+        result = _execute_public(
+            aggregate_data.execute, group_by, metrica, values, lote_id
+        )
         return AggregateOutput(
             group_by=group_by,
             metrica=metrica,
@@ -860,6 +1120,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_timeseries", structured_output=True)
+    @_guard_tool
     def cnes_timeseries(
         chave: Annotated[str, Field(min_length=1)],
         tipo_chave: Annotated[str, Field(pattern=r"^(cnes|municipio)$")],
@@ -868,7 +1129,7 @@ def create_mcp_server(
     ) -> TimeSeriesOutput:
         """Retorna a evolução mensal de leitos nos lotes retidos."""
 
-        result = time_series.execute(chave, tipo_chave, de, ate)
+        result = _execute_public(time_series.execute, chave, tipo_chave, de, ate)
         return TimeSeriesOutput(
             chave=chave,
             tipo_chave=tipo_chave,
@@ -882,15 +1143,19 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_diff", structured_output=True)
+    @_guard_tool
     def cnes_diff(
         lote_a: Annotated[str, Field(min_length=1)],
         lote_b: Annotated[str, Field(min_length=1)],
     ) -> DiffOutput:
         """Compara entradas, saídas e mudanças de leitos entre dois lotes."""
 
-        return DiffOutput.model_validate(diff_batches.execute(lote_a, lote_b))
+        return DiffOutput.model_validate(
+            _execute_public(diff_batches.execute, lote_a, lote_b)
+        )
 
     @server.tool(name="cnes_search_advanced", structured_output=True)
+    @_guard_tool
     def cnes_search_advanced(
         filtros: AdvancedFiltersInput | None = None,
         order_by: Annotated[
@@ -904,7 +1169,9 @@ def create_mcp_server(
         """Combina filtros canônicos com ordenação e paginação por offset."""
 
         values = filtros.model_dump(exclude_none=True) if filtros else {}
-        result = advanced_search.execute(values, order_by, offset, limit, lote_id)
+        result = _execute_public(
+            advanced_search.execute, values, order_by, offset, limit, lote_id
+        )
         return AdvancedSearchOutput(
             total_encontrados=result.total_available,
             total_retornados=len(result.items),
@@ -914,6 +1181,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_search_advanced_v2", structured_output=True)
+    @_guard_tool
     def cnes_search_advanced_v2(
         filtros: AdvancedFiltersInput | None = None,
         order_by: Annotated[
@@ -927,7 +1195,9 @@ def create_mcp_server(
         """Consulta os campos institucionais e leitos desagregados do contrato v2."""
 
         values = filtros.model_dump(exclude_none=True) if filtros else {}
-        result = advanced_search_v2.execute(values, order_by, offset, limit, lote_id)
+        result = _execute_public(
+            advanced_search_v2.execute, values, order_by, offset, limit, lote_id
+        )
         return AdvancedSearchV2Output(
             total_encontrados=result.total_available,
             total_retornados=len(result.items),
@@ -937,6 +1207,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_group_by_mantenedora", structured_output=True)
+    @_guard_tool
     def cnes_group_by_mantenedora(
         filtros: AdvancedFiltersInput | None = None,
         limit: ResultLimit = 100,
@@ -945,7 +1216,7 @@ def create_mcp_server(
         """Agrupa unidades do lote v2 por CNPJ da mantenedora."""
 
         values = filtros.model_dump(exclude_none=True) if filtros else {}
-        result = group_by_maintainer.execute(values, limit, lote_id)
+        result = _execute_public(group_by_maintainer.execute, values, limit, lote_id)
         missing_maintainers = result["unidades_sem_cnpj_mantenedora"]
         return MaintainerGroupsOutput(
             total_retornado=len(result["redes"]),
@@ -964,6 +1235,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_leads_triggers", structured_output=True)
+    @_guard_tool
     def cnes_leads_triggers(
         competencia_a: Annotated[str, Field(pattern=r"^\d{6}$")],
         competencia_b: Annotated[str, Field(pattern=r"^\d{6}$")],
@@ -974,12 +1246,14 @@ def create_mcp_server(
     ) -> LeadTriggersOutput:
         """Detecta expansão, retração, entrada e saída entre competências v2."""
 
-        result = lead_triggers.execute(
+        result = _execute_public(
+            lead_triggers.execute,
             competencia_a, competencia_b, delta_min, tipo_estabelecimento, lote_a, lote_b
         )
         return LeadTriggersOutput.model_validate(result)
 
     @server.tool(name="cnes_score_leads", structured_output=True)
+    @_guard_tool
     def cnes_score_leads(
         competencia_a: Annotated[str, Field(pattern=r"^\d{6}$")],
         competencia_b: Annotated[str, Field(pattern=r"^\d{6}$")],
@@ -993,7 +1267,8 @@ def create_mcp_server(
 
         filter_values = filtros.model_dump(exclude_none=True) if filtros else {}
         weight_values = pesos.model_dump()
-        result = score_leads.execute(
+        result = _execute_public(
+            score_leads.execute,
             competencia_a,
             competencia_b,
             weight_values,
@@ -1030,6 +1305,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_normalize", structured_output=True)
+    @_guard_tool
     def cnes_normalize(
         filepath: Annotated[str, Field(min_length=1)],
         origem: Annotated[str, Field(pattern=r"^(auto|csv_canonico|portal_sus)$")] = "auto",
@@ -1042,11 +1318,13 @@ def create_mcp_server(
                 Path(filepath), origem, Path(destino) if destino else None
             )
         except ImportSecurityError as exc:
-            raise ValueError(f"{exc}. Verifique filepath e a politica configurada.") from None
+            raise PublicToolError(
+                f"{exc}. Verifique filepath e a politica configurada."
+            ) from None
         except CNESDataLoadError as exc:
-            raise ValueError(_safe_load_error(exc)) from None
+            raise PublicToolError(_safe_load_error(exc)) from None
         return NormalizeOutput(
-            filepath=str(result.filepath),
+            filepath=_public_file_reference(result.filepath, runtime_settings.output_dir),
             origem=result.origin,
             registros=result.records,
             campos_nao_preenchidos=list(result.missing_fields),
@@ -1054,6 +1332,7 @@ def create_mcp_server(
         )
 
     @server.tool(name="cnes_export", structured_output=True)
+    @_guard_tool
     def cnes_export(
         formato: Annotated[str, Field(pattern=r"^(csv|json|jsonl|xlsx)$")],
         filtros: AdvancedFiltersInput | None = None,
@@ -1078,7 +1357,8 @@ def create_mcp_server(
         """Exporta a seleção para CSV, JSON, JSONL ou XLSX, com perfil CRM opcional."""
 
         values = filtros.model_dump(exclude_none=True) if filtros else {}
-        result = export_data.execute(
+        result = _execute_public(
+            export_data.execute,
             formato,
             values,
             Path(destino) if destino else None,
@@ -1090,7 +1370,9 @@ def create_mcp_server(
             perfil_saida,
         )
         return ExportOutput(
-            filepath=str(result.filepath), formato=formato, registros=result.records
+            filepath=_public_file_reference(result.filepath, runtime_settings.output_dir),
+            formato=formato,
+            registros=result.records,
         )
 
     return server

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from mcp_cnes.domain.errors import BatchNotFoundError
 from mcp_cnes.domain.identity import canonical_hospital_digest
 from mcp_cnes.domain.models import HospitalInfo, LoadSummary
 from mcp_cnes.domain.rules import is_within_bed_range, normalize_search_text
@@ -84,7 +85,7 @@ class MemoryCNESRepository:
         etag: str | None = None,
     ) -> None:
         if batch_id not in self.batch_metadata:
-            raise ValueError(f"Lote inexistente: {batch_id}")
+            raise BatchNotFoundError(f"Lote inexistente: {batch_id}")
         self.batch_metadata[batch_id].update(
             fonte=source, competencia=competence, filtros=dict(filters), etag=etag
         )
@@ -106,7 +107,7 @@ class MemoryCNESRepository:
 
     def activate_batch(self, batch_id: str) -> None:
         if batch_id not in self.batches:
-            raise ValueError(f"Lote inexistente: {batch_id}")
+            raise BatchNotFoundError(f"Lote inexistente: {batch_id}")
         self.active_batch_id = batch_id
         self.hospitals = list(self.batches[batch_id])
         metadata = self.batch_metadata[batch_id]
@@ -114,7 +115,7 @@ class MemoryCNESRepository:
 
     def purge_batch(self, batch_id: str) -> tuple[int, int]:
         if batch_id not in self.batches:
-            raise ValueError(f"Lote inexistente: {batch_id}")
+            raise BatchNotFoundError(f"Lote inexistente: {batch_id}")
         removed = len(self.batches.pop(batch_id))
         self.batch_metadata.pop(batch_id)
         if self.active_batch_id == batch_id:
@@ -232,7 +233,7 @@ class MemoryCNESRepository:
     def _selected(self, batch_id: str | None) -> tuple[str, list[HospitalInfo]]:
         selected = batch_id or self.active_batch_id
         if selected is None or selected not in self.batches:
-            raise ValueError(f"Lote inexistente: {selected or ''}")
+            raise BatchNotFoundError(f"Lote inexistente: {selected or ''}")
         return selected, list(self.batches[selected])
 
     @staticmethod

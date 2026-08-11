@@ -140,10 +140,14 @@ async def test_mcp_normalize_and_export_round_trip(tmp_path: Path) -> None:
         )
 
     assert normalized.is_error is False
-    assert Path(normalized.structured_content["filepath"]).is_file()
+    normalized_reference = Path(normalized.structured_content["filepath"])
+    assert normalized_reference.is_absolute() is False
+    assert (settings.output_dir / normalized_reference).is_file()
     assert normalized.structured_content["registros"] == 1
     assert loaded.is_error is False
     assert exported.is_error is False
-    export_path = Path(exported.structured_content["filepath"])
+    export_reference = Path(exported.structured_content["filepath"])
+    assert export_reference.is_absolute() is False
+    export_path = settings.output_dir / export_reference
     assert export_path.is_file()
     assert json.loads(export_path.read_text(encoding="utf-8"))[0]["uf"] == "AM"

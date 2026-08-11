@@ -55,7 +55,7 @@
       "cache",
       "etag"
     ],
-    "sha256": "dd13ff0ac2eff0b0ee3af7051d1b4dd1ec6b28d222b7401a6d4c1ffd085fd63e"
+    "sha256": "723b9b4179e347e7f59fb8c620c68c0238cf2e419aa49643e192ca99f23e55ed"
   },
   {
     "name": "cnes_validate_dataset",
@@ -102,7 +102,8 @@
   {
     "name": "cnes_purge",
     "input_properties": [
-      "lote_id"
+      "lote_id",
+      "confirmacao"
     ],
     "input_required": [],
     "output_properties": [
@@ -110,7 +111,7 @@
       "itens_removidos",
       "bytes_liberados"
     ],
-    "sha256": "9b4a13536a556544cbd13becfdd54f11e0892eeb29881a83c732c8a5f50a022a"
+    "sha256": "7679dc986f425a536a660d6c8a60a078b6022f2522a7d2dca9c663fe45772ac2"
   },
   {
     "name": "cnes_aggregate",
@@ -304,7 +305,7 @@
       "campos_nao_preenchidos",
       "campos_derivados"
     ],
-    "sha256": "90ea7f5d5b64bf24a1ad89894e8a13d6a6e8b736d74ec12b674f624126de7f25"
+    "sha256": "bf032d64131e78a324298adb805a59ca131f83e7dcd9001d610c23f90e489671"
   },
   {
     "name": "cnes_export",
@@ -327,6 +328,6 @@
       "formato",
       "registros"
     ],
-    "sha256": "28eef56a01bc2cef4c5f46b5b0bc12d2c8279c9df5ac2e7e45d551df721dcd88"
+    "sha256": "3ffaad7a3c237429c79612e8d177c3b69798b63e3b559926d399abbd9e3be29d"
   }
 ]

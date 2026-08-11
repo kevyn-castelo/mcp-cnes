@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from mcp import Client
@@ -117,7 +118,7 @@ async def test_remote_tools_are_discoverable_and_fetch_reports_filter_provenance
     assert competences.structured_content["ano_consultado"] == 2025
     assert competences.structured_content["competencias_disponiveis"] == ["202501"]
     assert fetched.structured_content == {
-        "filepath": str(source.output),
+        "filepath": source.output.name,
         "lote_id": None,
         "registros": 2,
         "filtros_nativos": [],
@@ -179,7 +180,7 @@ async def test_remote_failure_returns_structured_actionable_error(tmp_path: Path
     message = result_text(result)
     payload = json.loads(message[message.index("{") :])
     assert payload["erro"] == "remote_server_error"
-    assert payload["causa"] == "fonte temporariamente indisponível"
+    assert payload["causa"] == "A fonte remota está temporariamente indisponível."
     assert "retry" in payload["sugestao"]
     assert "Traceback" not in result_text(result)
 
@@ -210,7 +211,7 @@ async def test_unavailable_competence_year_returns_structured_actionable_error(
     payload = json.loads(result_text(result))
     assert payload == {
         "erro": "remote_competence_unavailable",
-        "causa": "A fonte oficial não publicou arquivo CSV para 2024",
+        "causa": "A fonte oficial não possui competências para o período solicitado.",
         "sugestao": (
             "Use cnes_list_sources para ver os anos ou omita ano em cnes_list_competencias."
         ),
@@ -260,6 +261,207 @@ async def test_controlled_tool_errors_are_exact_structured_json(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_internal_tool_errors_are_generic_and_do_not_leak_details(
+    tmp_path: Path,
+) -> None:
+    class ExplodingRepository(MemoryCNESRepository):
+        def has_data(self) -> bool:
+            raise RuntimeError(
+                f'duckdb.IOException: File "{tmp_path / "private.duckdb"}" SELECT * FROM secrets'
+            )
+
+    server = create_mcp_server(
+        settings=Settings(database_path=tmp_path / "unused.sqlite3"),
+        repository=ExplodingRepository(),
+    )
+    async with Client(server) as client:
+        result = await client.call_tool("cnes_statistics", {})
+
+    payload = json.loads(result_text(result))
+    assert payload["erro"] == "internal_error"
+    assert payload["causa"] == "Não foi possível concluir a operação solicitada."
+    assert "duckdb" not in result_text(result).casefold()
+    assert "private" not in result_text(result).casefold()
+    assert "select" not in result_text(result).casefold()
+
+
+@pytest.mark.asyncio
+async def test_unclassified_value_errors_cannot_publish_credentials_or_paths(
+    tmp_path: Path,
+) -> None:
+    class ExplodingRepository(MemoryCNESRepository):
+        def has_data(self) -> bool:
+            raise ValueError(
+                "Falha em https://alice:s3cr3t@example.test/private e "
+                'C:\\Users\\Jane Doe\\private.duckdb'
+            )
+
+    server = create_mcp_server(
+        settings=Settings(database_path=tmp_path / "unused.sqlite3"),
+        repository=ExplodingRepository(),
+    )
+    async with Client(server) as client:
+        result = await client.call_tool("cnes_statistics", {})
+
+    payload = json.loads(result_text(result))
+    assert payload["erro"] == "internal_error"
+    assert payload["causa"] == "Não foi possível concluir a operação solicitada."
+    for secret in ("alice", "s3cr3t", "example.test", "Jane Doe", "private"):
+        assert secret.casefold() not in result_text(result).casefold()
+
+
+@pytest.mark.asyncio
+async def test_repository_value_errors_inside_use_cases_remain_internal(
+    tmp_path: Path,
+) -> None:
+    class ExplodingRepository(MemoryCNESRepository):
+        def list_batches(self) -> list[dict[str, Any]]:
+            raise ValueError(
+                "backend endpoint=https://internal-db.example/private "
+                "token=supersecret tenant=acme"
+            )
+
+    server = create_mcp_server(
+        settings=Settings(database_path=tmp_path / "unused.sqlite3"),
+        repository=ExplodingRepository(),
+    )
+    async with Client(server) as client:
+        result = await client.call_tool("cnes_list_lotes", {})
+
+    payload = json.loads(result_text(result))
+    assert payload["erro"] == "internal_error"
+    assert payload["causa"] == "Não foi possível concluir a operação solicitada."
+    for secret in ("internal-db", "token", "supersecret", "tenant", "acme"):
+        assert secret.casefold() not in result_text(result).casefold()
+
+
+@pytest.mark.asyncio
+async def test_purge_is_disabled_by_default_even_with_confirmation(tmp_path: Path) -> None:
+    repository = MemoryCNESRepository()
+    repository.replace_all(
+        [
+            HospitalInfo(
+                cnes="1234567",
+                nome_fantasia="Hospital",
+                municipio="Manaus",
+                uf="AM",
+                leitos_existentes=50,
+                leitos_sus=40,
+                competencia="202501",
+            )
+        ],
+        "fixture.csv",
+        batch_id="protected-batch",
+    )
+    server = create_mcp_server(
+        settings=Settings(database_path=tmp_path / "unused.sqlite3"),
+        repository=repository,
+    )
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "cnes_purge",
+            {
+                "lote_id": "protected-batch",
+                "confirmacao": "EXCLUIR_LOTE:protected-batch",
+            },
+        )
+        lots = await client.call_tool("cnes_list_lotes", {})
+
+    assert result.is_error is True
+    assert "MCP_CNES_ALLOW_PURGE=true" in result_text(result)
+    assert [item["lote_id"] for item in lots.structured_content["lotes"]] == [
+        "protected-batch"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_enabled_purge_requires_exact_confirmation_and_then_removes_batch(
+    tmp_path: Path,
+) -> None:
+    repository = MemoryCNESRepository()
+    repository.replace_all(
+        [
+            HospitalInfo(
+                cnes="1234567",
+                nome_fantasia="Hospital",
+                municipio="Manaus",
+                uf="AM",
+                leitos_existentes=50,
+                leitos_sus=40,
+                competencia="202501",
+            )
+        ],
+        "fixture.csv",
+        batch_id="removable-batch",
+    )
+    server = create_mcp_server(
+        settings=Settings(
+            database_path=tmp_path / "unused.sqlite3",
+            allow_purge=True,
+        ),
+        repository=repository,
+    )
+    async with Client(server) as client:
+        rejected = await client.call_tool(
+            "cnes_purge",
+            {"lote_id": "removable-batch", "confirmacao": "EXCLUIR_LOTE:other"},
+        )
+        retained = await client.call_tool("cnes_list_lotes", {})
+        purged = await client.call_tool(
+            "cnes_purge",
+            {
+                "lote_id": "removable-batch",
+                "confirmacao": "EXCLUIR_LOTE:removable-batch",
+            },
+        )
+        remaining = await client.call_tool("cnes_list_lotes", {})
+
+    assert rejected.is_error is True
+    assert retained.structured_content["lotes"][0]["lote_id"] == "removable-batch"
+    assert purged.is_error is False
+    assert purged.structured_content["lote_id"] == "removable-batch"
+    assert purged.structured_content["itens_removidos"] == 1
+    assert remaining.structured_content["lotes"] == []
+
+
+@pytest.mark.asyncio
+async def test_enabled_cache_purge_requires_cache_confirmation(tmp_path: Path) -> None:
+    class PurgeableSource(FakeRemoteSource):
+        def __init__(self, output: Path) -> None:
+            super().__init__(output)
+            self.calls = 0
+
+        def purge_cache(self) -> tuple[int, int]:
+            self.calls += 1
+            return 2, 1024
+
+    source = PurgeableSource(tmp_path / "unused.csv")
+    server = create_mcp_server(
+        settings=Settings(
+            database_path=tmp_path / "unused.sqlite3",
+            allow_purge=True,
+        ),
+        repository=MemoryCNESRepository(),
+        remote_source=source,
+    )
+    async with Client(server) as client:
+        rejected = await client.call_tool(
+            "cnes_purge", {"confirmacao": "EXCLUIR_LOTE:any"}
+        )
+        purged = await client.call_tool(
+            "cnes_purge", {"confirmacao": "LIMPAR_CACHE"}
+        )
+
+    assert rejected.is_error is True
+    assert source.calls == 1
+    assert purged.structured_content == {
+        "lote_id": None,
+        "itens_removidos": 2,
+        "bytes_liberados": 1024,
+    }
+
+
+@pytest.mark.asyncio
 async def test_memory_repository_is_substitutable_for_catalog_state_tools(
     tmp_path: Path,
 ) -> None:
@@ -294,6 +496,40 @@ async def test_memory_repository_is_substitutable_for_catalog_state_tools(
     assert quality.is_error is False
     assert search.structured_content["total_encontrados"] == 1
     assert aggregate.structured_content["resultados"] == [{"grupo": "AM", "valor": 50.0}]
+
+
+@pytest.mark.asyncio
+async def test_statistics_and_batch_list_hide_absolute_source_paths(tmp_path: Path) -> None:
+    repository = MemoryCNESRepository()
+    source_path = tmp_path / "private" / "source.csv"
+    repository.replace_all(
+        [
+            HospitalInfo(
+                cnes="1234567",
+                nome_fantasia="Hospital",
+                municipio="Manaus",
+                uf="AM",
+                leitos_existentes=50,
+                leitos_sus=40,
+                competencia="202501",
+            )
+        ],
+        str(source_path),
+        batch_id="private-source",
+    )
+    server = create_mcp_server(
+        settings=Settings(database_path=tmp_path / "unused.sqlite3"),
+        repository=repository,
+    )
+
+    async with Client(server) as client:
+        statistics = await client.call_tool("cnes_statistics", {})
+        lots = await client.call_tool("cnes_list_lotes", {})
+
+    assert statistics.structured_content["arquivo_fonte"] == "source.csv"
+    assert lots.structured_content["lotes"][0]["arquivo_fonte"] == "source.csv"
+    assert str(tmp_path) not in result_text(statistics)
+    assert str(tmp_path) not in result_text(lots)
 
 
 @pytest.mark.asyncio

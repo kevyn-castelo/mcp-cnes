@@ -107,8 +107,10 @@ agrupamento devolve o mix como nulo com alerta, sem truncar ou inventar proporç
 - o Parquet normalizado da base completa é reutilizado somente quando hash,
   versão do recurso e schema coincidem com seus metadados; corrupção dispara nova
   normalização a partir do ZIP já baixado;
-- `cnes_purge` remove tanto ZIPs/metadados quanto Parquets normalizados do
-  diretório remoto configurado, sem alcançar os Parquets imutáveis dos lotes;
+- `cnes_purge` exige opt-in administrativo (`MCP_CNES_ALLOW_PURGE=true`) e
+  confirmação explícita; a limpeza de cache remove ZIPs/metadados e Parquets
+  normalizados do diretório remoto configurado, sem alcançar os Parquets
+  imutáveis dos lotes;
 - anos fechados são imutáveis; o ano corrente respeita TTL;
 - escrita atômica e destinos confinados aos diretórios configurados.
 

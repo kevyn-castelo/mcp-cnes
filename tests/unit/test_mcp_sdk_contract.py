@@ -138,9 +138,9 @@ async def test_official_client_calls_all_six_tools_with_controlled_fixture(
     "tool, arguments, expected_message",
     [
         ("cnes_search_cnes", {"cnes": "123"}, "sete dígitos"),
-        ("cnes_search_uf", {"uf": "Amazonas"}, "at most 2 characters"),
-        ("cnes_search_uf", {"uf": "AM", "limit": 0}, "greater than or equal to 1"),
-        ("cnes_search_uf", {"uf": "AM", "min_leitos": -1}, "greater than or equal to 0"),
+        ("cnes_search_uf", {"uf": "Amazonas"}, "exatamente duas letras"),
+        ("cnes_search_uf", {"uf": "AM", "limit": 0}, "entre 1 e 500"),
+        ("cnes_search_uf", {"uf": "AM", "min_leitos": -1}, "maior ou igual a zero"),
         (
             "cnes_download_instructions",
             {"extra": True},

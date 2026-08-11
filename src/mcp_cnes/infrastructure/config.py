@@ -73,7 +73,8 @@ class Settings:
     max_csv_size_bytes: int = 100 * 1024 * 1024
     allowed_csv_files: tuple[str, ...] = ()
     batch_retention_count: int = 5
-    output_dir: Path = Path(".")
+    output_dir: Path = Path("downloads/exports")
+    allow_purge: bool = False
     base_url: str = "https://elasticnes.saude.gov.br"
     kibana_api: str = "https://elasticnes.saude.gov.br/kibana/internal/bsearch"
     kibana_index: str = "cnes-leitos*"
@@ -144,6 +145,8 @@ class Settings:
             parsed = urlparse(value)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise ConfigurationError(f"{name} deve ser uma URL HTTP(S) válida")
+            if parsed.username is not None or parsed.password is not None:
+                raise ConfigurationError(f"{name} não pode conter credenciais")
         if not re.fullmatch(r"[A-Za-z0-9.-]+", self.remote_download_host):
             raise ConfigurationError("remote_download_host inválido")
         if not re.fullmatch(r"[A-Za-z0-9.-]+", self.datasus_ftp_host):
@@ -186,6 +189,19 @@ class Settings:
                 return float(raw)
             except ValueError as exc:
                 raise ConfigurationError(f"{name} deve ser um número") from exc
+
+        def boolean(name: str, default: bool) -> bool:
+            raw = env.get(name)
+            if raw is None:
+                return default
+            normalized = raw.strip().casefold()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+            raise ConfigurationError(
+                f"{name} deve ser um booleano (true/false)"
+            )
 
         def codes(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
             raw = env.get(name)
@@ -250,6 +266,7 @@ class Settings:
                 "MCP_CNES_BATCH_RETENTION_COUNT", default.batch_retention_count
             ),
             output_dir=Path(env.get("MCP_CNES_OUTPUT_DIR", str(default.output_dir))),
+            allow_purge=boolean("MCP_CNES_ALLOW_PURGE", default.allow_purge),
             base_url=env.get("MCP_CNES_BASE_URL", default.base_url),
             kibana_api=env.get("MCP_CNES_KIBANA_API", default.kibana_api),
             kibana_index=env.get("MCP_CNES_KIBANA_INDEX", default.kibana_index),

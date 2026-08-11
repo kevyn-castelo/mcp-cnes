@@ -731,7 +731,20 @@ class DatasusFullRemoteSource:
         return resolved
 
     def _destination(self, destination: Path | None) -> Path:
-        return (destination or self.settings.remote_dir).resolve(strict=False)
+        base = self.settings.remote_dir.resolve(strict=False)
+        candidate = base if destination is None else destination
+        if not candidate.is_absolute():
+            candidate = base / candidate
+        resolved = candidate.resolve(strict=False)
+        try:
+            resolved.relative_to(base)
+        except ValueError as exc:
+            raise CollectorError(
+                "remote_destination_not_allowed",
+                "remote_security",
+                "O destino deve permanecer dentro do diretório remoto configurado",
+            ) from exc
+        return resolved
 
     @staticmethod
     def _identifier(value: str) -> str:

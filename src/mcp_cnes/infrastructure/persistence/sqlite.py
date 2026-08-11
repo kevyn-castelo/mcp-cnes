@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from mcp_cnes.domain.errors import BatchNotFoundError
 from mcp_cnes.domain.identity import canonical_hospital_digest
 from mcp_cnes.domain.models import HospitalInfo, LoadSummary
 from mcp_cnes.domain.rules import normalize_search_text
@@ -667,7 +668,7 @@ class SQLiteCNESRepository:
             (selected,),
         ).fetchone()
         if exists is None:
-            raise ValueError(f"Lote inexistente: {selected}")
+            raise BatchNotFoundError(f"Lote inexistente: {selected}")
         return selected
 
     def list_batches(self) -> list[dict[str, Any]]:
@@ -733,7 +734,7 @@ class SQLiteCNESRepository:
             ),
         )
         if cursor.rowcount != 1:
-            raise ValueError(f"Lote inexistente: {batch_id}")
+            raise BatchNotFoundError(f"Lote inexistente: {batch_id}")
 
     def get_batch_metadata(self, batch_id: str | None = None) -> dict[str, Any]:
         with self._connection() as connection:
@@ -759,7 +760,7 @@ class SQLiteCNESRepository:
                 )
             ]
         if row is None:
-            raise ValueError(f"Lote inexistente: {selected}")
+            raise BatchNotFoundError(f"Lote inexistente: {selected}")
         return {
             "lote_id": str(row["id"]),
             "fonte": str(row["source"]),

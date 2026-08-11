@@ -22,6 +22,7 @@ def test_settings_externalize_runtime_values() -> None:
             "MCP_CNES_ALLOWED_CSV_FILES": "valid.csv,monthly.csv",
             "MCP_CNES_BATCH_RETENTION_COUNT": "3",
             "MCP_CNES_OUTPUT_DIR": "output",
+            "MCP_CNES_ALLOW_PURGE": "true",
             "MCP_CNES_BASE_URL": "https://example.test",
             "MCP_CNES_KIBANA_API": "https://example.test/api",
             "MCP_CNES_KIBANA_INDEX": "cnes_custom_*",
@@ -43,6 +44,7 @@ def test_settings_externalize_runtime_values() -> None:
     assert settings.max_csv_size_bytes == 2048
     assert settings.allowed_csv_files == ("valid.csv", "monthly.csv")
     assert settings.batch_retention_count == 3
+    assert settings.allow_purge is True
     assert settings.request_timeout == 30
     assert settings.kibana_index == "cnes_custom_*"
 
@@ -59,7 +61,9 @@ def test_settings_externalize_runtime_values() -> None:
         ({"MCP_CNES_MAX_CSV_SIZE_BYTES": "0"}, "maior que zero"),
         ({"MCP_CNES_BATCH_RETENTION_COUNT": "0"}, "maior que zero"),
         ({"MCP_CNES_BASE_URL": "not-a-url"}, r"URL HTTP\(S\) válida"),
+        ({"MCP_CNES_BASE_URL": "https://user:secret@example.test"}, "credenciais"),
         ({"MCP_CNES_KIBANA_INDEX": "../secret"}, "índice Kibana inválido"),
+        ({"MCP_CNES_ALLOW_PURGE": "sometimes"}, "deve ser um booleano"),
     ],
 )
 def test_invalid_settings_fail_with_clear_message(
@@ -76,3 +80,10 @@ def test_invalid_environment_fails_during_server_bootstrap(
 
     with pytest.raises(ConfigurationError, match="MCP_CNES_REQUEST_TIMEOUT deve ser um inteiro"):
         create_mcp_server()
+
+
+def test_purge_is_disabled_and_exports_use_private_directory_by_default() -> None:
+    settings = Settings()
+
+    assert settings.allow_purge is False
+    assert settings.output_dir.as_posix() == "downloads/exports"
