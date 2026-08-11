@@ -41,7 +41,7 @@ instalar Git e uv
   → consultar hospitais
 ```
 
-A versão `0.1.1` é distribuída pelo GitHub. PyPI, npm e instalação própria por
+A versão `0.1.2` é distribuída pelo GitHub. PyPI, npm e instalação própria por
 `curl` ainda não são canais oficiais; por enquanto, use o checkout conforme as
 instruções abaixo.
 
@@ -88,7 +88,7 @@ Os mesmos comandos funcionam em PowerShell, macOS e Linux:
 git --version
 uv --version
 
-git clone --branch v0.1.1 --depth 1 https://github.com/kevyn-castelo/mcp-cnes.git
+git clone --branch v0.1.2 --depth 1 https://github.com/kevyn-castelo/mcp-cnes.git
 cd mcp-cnes
 uv sync --locked
 uv run python --version
@@ -451,7 +451,8 @@ cutover.
 | [Política mínima de dados](docs/data-retention.md) | Persistência, privacidade e retenção |
 | [Cutover e rollback](docs/cutover.md) | Validação operacional e recuperação |
 | [Changelog](CHANGELOG.md) | Histórico das versões |
-| [Notas da v0.1.1](docs/releases/v0.1.1.md) | Versão recomendada e endurecida |
+| [Notas da v0.1.2](docs/releases/v0.1.2.md) | Versão recomendada e endurecida |
+| [Notas da v0.1.1](docs/releases/v0.1.1.md) | Histórico; substituída por inconsistência de versão |
 | [Notas da v0.1.0](docs/releases/v0.1.0.md) | Histórico da release inicial |
 | [Política de segurança](SECURITY.md) | Reporte responsável de vulnerabilidades |
 
