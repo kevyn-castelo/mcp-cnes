@@ -1,278 +1,121 @@
-# MCP CNES — Servidor de dados do CNES
+# MCP CNES
 
-Servidor MCP para carregar e consultar dados públicos do Cadastro Nacional de
-Estabelecimentos de Saúde (CNES). O entrypoint padrão usa o SDK Python MCP v2
-oficial com transporte `stdio`. `mcp_server.py` permanece temporariamente apenas
-como baseline de paridade e não deve ser usado como rollback por clientes MCP.
+[![CI](https://github.com/kevyn-castelo/mcp-cnes/actions/workflows/ci.yml/badge.svg)](https://github.com/kevyn-castelo/mcp-cnes/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/kevyn-castelo/mcp-cnes)](https://github.com/kevyn-castelo/mcp-cnes/releases/latest)
+[![Python](https://img.shields.io/badge/Python-%3E%3D3.11-3776AB)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Ferramentas disponíveis
+Servidor MCP local para consultar dados públicos do Cadastro Nacional de
+Estabelecimentos de Saúde (CNES) e transformar registros hospitalares em recortes
+úteis para pesquisa, qualificação de leads e exportação para CRM.
 
-| Ferramenta | Descrição |
-|---|---|
-| `cnes_load_data` | Carrega um CSV exportado do dashboard CNES |
-| `cnes_search_municipio` | Busca por município com filtros canônicos e ordenação |
-| `cnes_search_cnes` | Busca um estabelecimento pelo código CNES |
-| `cnes_search_uf` | Busca por UF com filtros canônicos e ordenação |
-| `cnes_statistics` | Retorna estatísticas dos dados carregados |
-| `cnes_download_instructions` | Explica como obter o CSV manualmente |
-| `cnes_list_sources` / `cnes_list_competencias` | Descobre a fonte oficial e as competências `YYYYMM` de um ano por chamada |
-| `cnes_fetch` | Baixa, filtra, normaliza e opcionalmente ativa uma competência |
-| `cnes_normalize` / `cnes_validate_dataset` | Normaliza CSV local e verifica qualidade do lote |
-| `cnes_list_lotes` / `cnes_use_lote` / `cnes_purge` | Gerencia histórico, lote ativo e cache |
-| `cnes_aggregate` / `cnes_timeseries` / `cnes_diff` | Executa análises sobre lotes retidos |
-| `cnes_search_advanced` / `cnes_export` | Combina filtros e exporta recortes auditáveis em CSV, JSON, JSONL ou XLSX |
-| `cnes_search_advanced_v2` | Consulta dados institucionais, geolocalização qualificada e leitos desagregados da base completa |
-| `cnes_group_by_mantenedora` | Consolida unidades, leitos, distribuição por UF e mix SUS por CNPJ mantenedora |
-| `cnes_leads_triggers` | Detecta expansão, retração, entrada e saída entre duas competências retidas |
-| `cnes_score_leads` | Calcula score comercial decomposto com pesos integralmente informados na chamada |
+O MCP CNES usa fontes oficiais do Ministério da Saúde/DATASUS, funciona por
+`stdio`, não exige chave de API e expõe **23 ferramentas MCP**.
 
-## Fluxo remoto e fluxo manual
+## O que você pode fazer
 
-No fluxo recomendado, use `cnes_list_competencias` e depois `cnes_fetch` com uma
-competência `YYYYMM`. Por padrão, a descoberta consulta somente o ano mais recente;
-informe `ano` para consultar um ano específico. A resposta inclui `ano_consultado`
-e somente competências desse ano, evitando baixar todo o histórico. A tool descobre
-o arquivo no catálogo oficial, aplica os
-filtros localmente, gera um CSV canônico e, por padrão, carrega o resultado como
-lote ativo. A resposta informa a fonte, cache do artefato anual, campos derivados e quais filtros
-foram nativos ou locais.
+- localizar hospitais por município, UF, tipo, gestão, natureza jurídica e porte;
+- consultar razão social, CNPJ, mantenedora, endereço e contatos institucionais;
+- diferenciar leitos de UTI, cirúrgicos, clínicos, obstétricos e complementares;
+- identificar redes hospitalares pelo CNPJ da mantenedora;
+- detectar expansão, retração, entrada e saída entre competências;
+- calcular scores comerciais com pesos informados em cada chamada;
+- exportar seleções auditáveis em CSV, JSON, JSONL ou XLSX;
+- manter lotes históricos para comparação sem misturar competências.
 
-Os arquivos anuais são armazenados por `(fonte, ano)`. Trocar município ou outro
-filtro local no mesmo ano reaproveita o download; anos ainda abertos são
-revalidados por ETag com requisição condicional.
+> O CNES descreve capacidade instalada. O projeto não calcula nem estima taxa de
+> ocupação. CPF e nomes de pessoas físicas não fazem parte dos schemas, retornos
+> ou arquivos exportados.
 
-O fluxo anterior continua disponível: obtenha as instruções com
-`cnes_download_instructions` e carregue um CSV aprovado com `cnes_load_data`.
-As seis tools históricas mantêm os schemas de saída v1; novos parâmetros são
-aditivos. As 19 tools declaram `x-cnes-contract-version: v1` no input schema e
-consultam o lote ativo. Para consultar outro lote, use `cnes_use_lote` antes da
-busca.
+## Início rápido
 
-As buscas simples aceitam `tipo_estabelecimento`, `natureza_juridica`, `gestao`,
-`convenio_sus`, faixa de leitos e `order_by`. O default ordena
-`leitos_existentes` de forma decrescente. `cnes_export` aceita `cnes_list`,
-`limit`, `offset` e `order_by`; CSV, JSON e JSONL recebem proveniência por registro
-e XLSX recebe a aba `_metadados`. Com `perfil_saida="crm_generico"`, o export usa
-o contrato v2 e inclui `chave_deduplicacao` no formato `cnes:cnpj`.
+O primeiro objetivo é fazer o cliente MCP listar as ferramentas e executar uma
+consulta real. O fluxo completo é:
 
-Para o contrato aditivo `v2`, selecione `fonte="datasus_base_completa"` em
-`cnes_fetch`. O servidor baixa o ZIP mensal oficial, projeta somente pessoa
-jurídica e campos institucionais, grava o lote como Parquet e o consulta com
-DuckDB. As 19 tools anteriores continuam declaradas como `v1`; as quatro tools
-comerciais (`cnes_search_advanced_v2`, agrupamento, gatilhos e score) declaram e
-retornam `v2`. `cnes_export` mantém `v1` por padrão e anuncia suporte a `v1`/`v2`.
+```text
+instalar Git e uv
+  → clonar o repositório
+  → sincronizar o ambiente
+  → configurar o cliente MCP
+  → carregar uma competência
+  → consultar hospitais
+```
 
-O `v2` acrescenta razão social, CNPJ, CNPJ mantenedora, endereço, telefone,
-e-mail, coordenadas com `geo_confiavel` e leitos de UTI adulto/pediátrica/
-neonatal, cirúrgicos, clínicos, obstétricos e complementares, além das
-habilitações ativas do estabelecimento. Quantidades de leitos ausentes ou
-inválidas permanecem nulas nos campos v2 e são enumeradas em `campos_ausentes`;
-o valor legado v1 permanece compatível. CPF e nomes de pessoa física não entram
-no pipeline nem nos schemas públicos.
+A versão `0.1.0` é distribuída pelo GitHub. PyPI, npm e instalação própria por
+`curl` ainda não são canais oficiais; por enquanto, use o checkout conforme as
+instruções abaixo.
 
-O score não contém pesos implícitos: `porte`, `complexidade`, `mix_pagador` e
-`tendencia` devem ser informados, e o retorno mostra cada dimensão e o total.
-Complexidade é a média documentada dos percentis de leitos de UTI e quantidade
-de habilitações ativas; os dois componentes também são retornados separadamente.
-Gatilhos e score retornam `lote_a`/`lote_b` e aceitam esses identificadores como
-parâmetros opcionais. Quando há mais de um lote v2 da mesma competência, a chamada
-deve informar os lotes para evitar comparar recortes ambíguos. `delta_min` vale
-igualmente para expansão, retração, entrada e saída. Diferenças nos filtros de
-origem são devolvidas em `avisos` também no score.
+## Requisitos do sistema
 
-`cnes_validate_dataset` considera inválido um registro em que `leitos_sus` excede
-`leitos_existentes`. Nesse caso, o agrupamento por mantenedora mantém os totais,
-mas retorna os mixes como nulos e inclui um alerta explícito.
+- Windows 10/11, macOS ou Linux;
+- [Git](https://git-scm.com/downloads);
+- [uv](https://docs.astral.sh/uv/) 0.12 ou superior;
+- acesso HTTPS ao Portal SUS e acesso FTP ao DATASUS para a base completa;
+- espaço em disco compatível com os arquivos consultados.
 
-Detalhes e limitações das integrações estão em [docs/fontes.md](docs/fontes.md).
+O runtime suporta Python 3.11 ou superior. O arquivo `.python-version` seleciona
+Python 3.14 para desenvolvimento, e o `uv` pode provisionar essa versão sem alterar
+o Python global do sistema.
 
-## Requisitos
+Arquivos da base completa podem ser grandes. O limite de download padrão dessa
+fonte é 2 GiB; escolha um diretório com espaço livre suficiente antes da primeira
+carga.
 
-- [uv](https://docs.astral.sh/uv/) 0.12 ou superior.
-- Python 3.11 ou superior. O arquivo `.python-version` fixa Python 3.14 para o
-  ambiente de desenvolvimento reproduzível.
+## Setup no sistema
 
-Não use o `.venv` de outra máquina. O `uv` cria ou recria o ambiente local a
-partir de `pyproject.toml` e `uv.lock`.
+### Instalar o uv
 
-## Bootstrap reproduzível
+No Windows, instale o Git pelo site oficial ou pelo gerenciador de pacotes da sua
+organização. Depois, em PowerShell:
 
 ```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+No macOS ou Linux, instale o Git pelo gerenciador do sistema e execute:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Abra um novo terminal caso `uv` ainda não esteja no `PATH`.
+
+### Instalar a versão estável
+
+Os mesmos comandos funcionam em PowerShell, macOS e Linux:
+
+```bash
+git --version
+uv --version
+
+git clone --branch v0.1.0 --depth 1 https://github.com/kevyn-castelo/mcp-cnes.git
+cd mcp-cnes
 uv sync --locked
+uv run python --version
 ```
 
-`pyproject.toml` é a fonte canônica das dependências e `uv.lock` fixa as versões
-resolvidas. O antigo `requirements.txt` permanece somente como aviso de migração.
+Para contribuir ou testar alterações ainda não lançadas, clone `main` sem
+`--branch` e sem `--depth 1`.
 
-## Verificação local
+O comando `uv sync --locked` recria o ambiente a partir de `pyproject.toml` e
+`uv.lock`. Não reutilize a `.venv` copiada de outra máquina.
+
+### Verificar o servidor
+
+No diretório do projeto, execute:
 
 ```powershell
-# Suíte padrão: não acessa a internet nem requer Playwright
-uv run pytest
-
-# Cobertura do pacote que receberá as camadas modernizadas
-uv run pytest --cov=mcp_cnes --cov-report=term-missing
-
-# Qualidade estática
-uv run ruff check src tests mcp_server.py benchmarks
-uv run pyright
-
-# Servidor MCP oficial via stdio
 uv run mcp-cnes
-
-# Validação interativa com MCP Inspector
-uv run mcp dev src/mcp_cnes/mcp_app.py
-
-# Paridade de cutover entre o fallback e o SDK oficial
-uv run pytest tests/contract/test_cutover_parity.py
 ```
 
-Os testes de contrato em `tests/fixtures/contracts/` congelam os nomes, schemas e
-exemplos de resposta das seis ferramentas existentes. Alterações nessas fixtures
-devem ser revisadas como mudanças de contrato.
+O processo utiliza `stdio` e fica aguardando um cliente MCP. Um terminal sem
+prompt ou mensagens após a inicialização é esperado. Pressione `Ctrl+C` para
+encerrar o teste manual.
 
-O benchmark de persistência pode ser reproduzido com
-`uv run python benchmarks/benchmark_sqlite_import.py --rows 400000`; a última
-medição registrada fica em `benchmarks/results/sqlite-400k.json`.
+## Configurar no cliente MCP
 
-O snapshot `sdk-tools.snapshot.json` protege os schemas completos por SHA-256 e
-mantém visíveis propriedades de entrada/saída e campos obrigatórios.
-
-## Contrato do SDK MCP
-
-- Os seis nomes históricos permanecem estáveis.
-- Inputs e outputs possuem JSON Schema gerado a partir de type hints/Pydantic.
-- Parâmetros extras são rejeitados e anunciados com
-  `additionalProperties: false`.
-- CNES exige sete dígitos, UF exige duas letras e `limit` aceita `1–500`.
-- Falhas recuperáveis retornam `isError: true`, permitindo autocorreção pelo
-  agente; elas não são retornadas como sucesso.
-- Sucessos incluem `structuredContent` e conteúdo textual JSON para clientes
-  anteriores à saída estruturada.
-- O SDK negocia a revisão atual `2026-07-28` e o modo legado suportado.
-
-Essas são correções intencionais em relação ao envelope legado. O fallback
-`mcp_server.py` não é um entrypoint suportado para novos consumidores e será
-retirado após o gate operacional descrito em `docs/cutover.md`.
-
-O teste `tests/unit/test_architecture.py` também funciona como gate de
-dependências: domínio não pode importar MCP, banco, HTTP, Playwright ou pandas;
-aplicação só pode depender do domínio e de suas próprias portas.
-
-## Configuração validada
-
-O bootstrap lê settings somente quando o servidor ou um coletor é criado.
-Configurações inválidas interrompem a inicialização com mensagem explícita, sem
-iniciar rede, browser ou processamento de arquivos. Os principais nomes são:
-
-| Variável | Padrão |
-|---|---|
-| `MCP_CNES_COMPETENCE` | `202512` |
-| `MCP_CNES_MIN_BEDS` / `MCP_CNES_MAX_BEDS` | `50` / `150` |
-| `MCP_CNES_TARGET_CITIES` | objeto JSON com regiões e cidades |
-| `MCP_CNES_PRIVATE_NATURE_CODES` | códigos separados por vírgula |
-| `MCP_CNES_DIRECTOR_CBO_CODES` | códigos separados por vírgula |
-| `MCP_CNES_DATA_DIR` / `MCP_CNES_OUTPUT_DIR` | `downloads` / `.` |
-| `MCP_CNES_DATABASE_PATH` | `downloads/cnes.sqlite3` |
-| `MCP_CNES_MAX_CSV_SIZE_BYTES` | `104857600` |
-| `MCP_CNES_ALLOWED_CSV_FILES` | vazio (todos os CSVs confinados ao diretório) |
-| `MCP_CNES_BATCH_RETENTION_COUNT` | `5` lotes concluídos |
-| `MCP_CNES_BASE_URL`, `MCP_CNES_KIBANA_API`, `MCP_CNES_DASHBOARD_URL` | ElastiCNES |
-| `MCP_CNES_KIBANA_INDEX` | padrão de índice; default `cnes-leitos*` |
-| `MCP_CNES_REQUEST_TIMEOUT` / `MCP_CNES_BROWSER_TIMEOUT_MS` | `60` / `60000` |
-| `MCP_CNES_REMOTE_DIR` / `MCP_CNES_REMOTE_CACHE_DIR` | ao lado do banco SQLite |
-| `MCP_CNES_REMOTE_CACHE_TTL_SECONDS` | `86400` |
-| `MCP_CNES_REMOTE_MAX_DOWNLOAD_BYTES` | `104857600` |
-| `MCP_CNES_REMOTE_MAX_CONCURRENCY` | `2` |
-| `MCP_CNES_REMOTE_USER_AGENT` | identificação do projeto e repositório |
-
-Delays e retries também podem ser definidos com `MCP_CNES_MIN_DELAY`,
-`MCP_CNES_MAX_DELAY`, `MCP_CNES_MAX_RETRIES` e `MCP_CNES_RETRY_DELAY`.
-
-A importação aceita somente arquivos `.csv` resolvidos dentro de
-`MCP_CNES_DATA_DIR`. Quando `MCP_CNES_ALLOWED_CSV_FILES` é definido, os nomes
-permitidos devem ser separados por vírgula. Travessia de diretório, escape por
-link simbólico e arquivos acima do limite são rejeitados antes da leitura.
-Durante o parsing, deduplicação e consolidação usam um SQLite temporário em disco,
-removido ao final da carga. O catálogo retém somente a quantidade configurada de
-lotes concluídos; o expurgo do histórico e de seu staging ocorre na mesma transação
-que publica o lote atual.
-
-## Faixa de leitos configurável
-
-As buscas MCP por município e UF aceitam limites inclusivos opcionais definidos
-em cada chamada pelo usuário ou agente:
-
-```json
-{
-  "municipio": "Manaus",
-  "min_leitos": 50,
-  "max_leitos": 150,
-  "limit": 20
-}
-```
-
-- `min_leitos` e `max_leitos` podem ser usados juntos ou isoladamente.
-- Quando ambos são omitidos, a busca MCP mantém o comportamento anterior e não
-  filtra por porte.
-- A resposta diferencia `total_encontrados` de `total_retornados` e informa os
-  limites aplicados em `filtros_leitos`.
-- Valores negativos ou intervalos invertidos retornam erro explícito.
-
-O scraper direto mantém `50–150` como padrão por compatibilidade, mas também
-aceita override por linha de comando:
-
-```powershell
-uv run python cnes_scraper.py --min-beds 20 --max-beds 300
-```
-
-## Dependência opcional de navegador
-
-Os coletores externos implementam a porta `CNESCollector` em
-`mcp_cnes.infrastructure.collectors`:
-
-- `KibanaHttpCollector` recebe uma sessão HTTP injetável, aplica timeout/retry e
-  consulta `internal/bsearch`, distinguindo `http_timeout`, `http_rate_limited`,
-  `http_server_error` e erros de transporte.
-- `PlaywrightCNESCollector` compõe o `PlaywrightCsvDownloader`, que identifica a
-  etapa de falha, captura downloads por `page.expect_download`, usa nomes únicos e
-  remove o CSV temporário após a importação.
-
-Falhas externas usam `CollectorError`, com `code`, `stage`, `retryable` e
-`status_code`, permitindo diferenciá-las de regressões internas sem vazar respostas.
-
-Playwright pertence ao grupo opcional `browser` e não é instalado por `uv sync`
-nem necessário para a suíte padrão.
-
-```powershell
-uv sync --locked --group browser
-uv run playwright install chromium
-uv run python cnes_playwright_collector.py
-```
-
-## Testes externos
-
-Testes marcados como `live` são separados da suíte padrão e só acessam a internet
-quando a variável de autorização está definida:
-
-```powershell
-$env:CNES_RUN_LIVE_TESTS = "1"
-uv run pytest -m live
-Remove-Item Env:CNES_RUN_LIVE_TESTS
-```
-
-O workflow `Live smoke` também pode ser iniciado manualmente no GitHub Actions.
-Ele executa uma única consulta de contrato via Kibana, possui timeout de cinco minutos
-e nunca é disparado em pull requests. A suíte padrão bloqueia conexões externas;
-coletores HTTP devem usar respostas injetadas nos testes.
-
-Os scripts históricos `test_api.py`, `test_scraper.py` e `test_mcp_server.py` são
-diagnósticos manuais e não fazem parte da suíte automatizada em `tests/`.
-
-## Uso como servidor MCP
-
-Exemplo de configuração local. Substitua o diretório pelo caminho real do seu
-checkout; nenhum caminho de usuário é codificado na aplicação.
+Adicione um servidor chamado `cnes` na configuração do seu cliente. Substitua
+`CAMINHO_ABSOLUTO` pelo diretório do checkout.
 
 ```json
 {
@@ -281,7 +124,7 @@ checkout; nenhum caminho de usuário é codificado na aplicação.
       "command": "uv",
       "args": [
         "--directory",
-        "C:/caminho/absoluto/mcp_cnes",
+        "CAMINHO_ABSOLUTO",
         "run",
         "mcp-cnes"
       ]
@@ -290,67 +133,345 @@ checkout; nenhum caminho de usuário é codificado na aplicação.
 }
 ```
 
-## Cutover e rollback
+| Sistema | Exemplo de caminho absoluto | Localizar `uv` |
+|---|---|---|
+| Windows | `C:/Users/SEU_USUARIO/mcp-cnes` | `where.exe uv` |
+| macOS | `/Users/seu-usuario/mcp-cnes` | `command -v uv` |
+| Linux | `/home/seu-usuario/mcp-cnes` | `command -v uv` |
 
-O procedimento operacional completo está em [docs/cutover.md](docs/cutover.md).
-Antes de alterar um cliente real, execute a paridade automatizada e gere um
-manifesto do smoke `stdio` com `uv run mcp-cnes-cutover-smoke --help`. O manifesto
-registra versão, revisão verificada, digest da fonte, protocolo, hashes de schema,
-volume importado e a execução das seis ferramentas sem persistir conteúdo de
-estabelecimentos ou caminhos absolutos. O comando exige banco novo e descartável,
-recusa catálogos preexistentes e nunca sobrescreve um manifesto anterior.
+Se o cliente não encontrar `uv`, substitua `"command": "uv"` pelo caminho
+absoluto retornado na última coluna.
 
-O legado só pode ser removido depois da validação do cliente real, do ensaio de
-rollback para um checkout oficial `last-known-good`, do inventário de consumidores
-e da aprovação explícita do responsável.
+Salve a configuração e reinicie completamente o cliente MCP. O nome e a localização
+do arquivo de configuração variam entre Claude Desktop, Cursor, VS Code, Codex e
+outros clientes; consulte a documentação do cliente para localizar a seção
+`mcpServers`.
 
-## Troubleshooting
+## Configuração de dados e armazenamento
 
-- `uv sync --locked` falha: confirme Python 3.11+ e uma versão recente do `uv`;
-  remova apenas a `.venv` local e repita o bootstrap.
-- o cliente não lista as tools: execute `uv run mcp-cnes` no mesmo diretório e
-  confira `command`, `args` e caminhos absolutos na configuração do cliente.
-- a carga rejeita o CSV: confirme que o arquivo está dentro de
-  `MCP_CNES_DATA_DIR`, possui extensão `.csv`, respeita o limite e, quando usada,
-  consta em `MCP_CNES_ALLOWED_CSV_FILES`.
-- o smoke falha em uma busca: use município, UF e CNES que existam no mesmo CSV;
-  uma resposta vazia é tratada como falha de validação, não como sucesso.
-- suspeita de banco corrompido ou bloqueado: não apague o catálogo em uso; gere um
-  banco separado para o smoke e preserve o anterior para rollback e diagnóstico.
+Sem configuração adicional, bancos, caches e arquivos remotos ficam sob
+`downloads/` dentro do checkout. Para separar código e dados, adicione um bloco
+`env` ao servidor já configurado:
 
-## Fonte dos dados
+```json
+{
+  "env": {
+    "MCP_CNES_COLUMNAR_DATABASE_PATH": "C:/dados/mcp-cnes/cnes.duckdb",
+    "MCP_CNES_COLUMNAR_DIR": "C:/dados/mcp-cnes/parquet",
+    "MCP_CNES_OUTPUT_DIR": "C:/dados/mcp-cnes/exports"
+  }
+}
+```
 
-O fluxo automático usa o dataset oficial Hospitais e Leitos do Portal de Dados
-Abertos do SUS. Os dashboards abaixo permanecem como alternativa manual:
+Use caminhos absolutos equivalentes em macOS ou Linux. Configure também os
+diretórios de importação, download e cache da tabela abaixo quando quiser manter
+**todos** os dados fora do checkout.
 
-- Leitos: <https://elasticnes.saude.gov.br/leitos>
-- Geral: <https://elasticnes.saude.gov.br/geral>
-- Profissionais: <https://elasticnes.saude.gov.br/profissionais>
+O arquivo [.env.example](.env.example) serve como referência, mas o entrypoint não
+o carrega automaticamente: defina as variáveis no cliente MCP ou no ambiente do
+processo.
 
-Para download manual, acesse o dashboard de leitos, localize o painel “EXTRATO
-DOS LEITOS”, abra o menu do painel e escolha “Download CSV”. O dashboard informa
-limite de 400.000 registros por download.
+### Variáveis mais úteis
 
-## Estrutura atual
+| Variável | Padrão | Finalidade |
+|---|---:|---|
+| `MCP_CNES_DATA_DIR` | `downloads` | Diretório autorizado para importações CSV manuais |
+| `MCP_CNES_COLUMNAR_DATABASE_PATH` | `downloads/cnes.duckdb` | Banco de consultas colunares |
+| `MCP_CNES_COLUMNAR_DIR` | `downloads/parquet` | Lotes imutáveis em Parquet |
+| `MCP_CNES_OUTPUT_DIR` | `.` | Destino permitido para exports |
+| `MCP_CNES_REMOTE_DIR` | `downloads/remote` | Artefatos baixados das fontes oficiais |
+| `MCP_CNES_REMOTE_CACHE_DIR` | `downloads/cache` | Índices e metadados de cache |
+| `MCP_CNES_BATCH_RETENTION_COUNT` | `5` | Quantidade de lotes concluídos retidos |
+| `MCP_CNES_REMOTE_CACHE_TTL_SECONDS` | `86400` | TTL do cache de fontes ainda mutáveis |
+| `MCP_CNES_REMOTE_MAX_DOWNLOAD_BYTES` | `104857600` | Limite do artefato anual do Portal SUS |
+| `MCP_CNES_DATASUS_MAX_DOWNLOAD_BYTES` | `2147483648` | Limite do ZIP mensal da base completa |
+| `MCP_CNES_REQUEST_TIMEOUT` | `60` | Timeout HTTP em segundos |
+| `MCP_CNES_MAX_RETRIES` | `3` | Máximo de tentativas para falhas transitórias |
+
+Para importação manual, `MCP_CNES_ALLOWED_CSV_FILES` pode restringir os nomes
+aceitos, separados por vírgula. Arquivos fora de `MCP_CNES_DATA_DIR`, links que
+escapem desse diretório e CSVs acima do limite são rejeitados antes da leitura.
+
+Configurações inválidas interrompem a inicialização com erro explícito, antes de
+qualquer download ou processamento.
+
+## Fazer a primeira consulta
+
+Depois de reiniciar o cliente, experimente esta sequência em linguagem natural.
+
+### 1. Verificar as fontes
+
+> Liste as fontes disponíveis no MCP CNES e informe o status de cada uma.
+
+O cliente deve chamar `cnes_list_sources` e mostrar:
+
+- `portal_sus_hospitais_leitos`, para o contrato `v1`;
+- `datasus_base_completa`, para o contrato `v2`.
+
+Uma fonte externa indisponível aparece como `indisponivel`, com o motivo. O
+servidor não transforma falhas de rede em respostas vazias.
+
+### 2. Descobrir uma competência
+
+> Liste as competências do Portal SUS para 2025.
+
+O cliente deve usar `cnes_list_competencias` com `ano=2025` e devolver competências
+mensais no formato `YYYYMM`.
+
+### 3. Carregar os dados
+
+> Carregue a competência 202512 do Portal SUS para o Amazonas e deixe o lote ativo.
+
+O cliente deve chamar `cnes_fetch` com algo equivalente a:
+
+```json
+{
+  "competencia": "202512",
+  "uf": "AM",
+  "fonte": "portal_sus_hospitais_leitos",
+  "auto_load": true
+}
+```
+
+A resposta informa `lote_id`, quantidade de registros, filtros locais, ETag e se o
+download usou cache. A primeira chamada pode demorar porque o Portal SUS publica
+um arquivo anual completo; trocar apenas o município no mesmo ano deve reutilizar
+o artefato.
+
+### 4. Pesquisar hospitais
+
+> Liste os 10 maiores hospitais de Manaus por número de leitos existentes.
+
+O cliente pode usar `cnes_search_municipio` com `tipo_estabelecimento="HOSPITAL"`,
+`order_by="leitos_existentes"` e `limit=10`.
+
+Nesse ponto, a instalação está funcional: o servidor foi iniciado, uma competência
+foi carregada e uma consulta retornou estabelecimentos reais.
+
+## Usar o contrato v2
+
+Para razão social, CNPJ, mantenedora, endereço, contato institucional,
+geolocalização qualificada, habilitações e leitos por tipo, carregue a base mensal
+completa:
+
+> Carregue a competência 202512 usando a fonte datasus_base_completa.
+
+Uma consulta v2 simples já pode usar esse lote. Gatilhos e score, porém, precisam
+de um lote v2 retido para cada competência comparada. Antes dos exemplos de
+tendência, solicite também:
+
+> Carregue a competência 202012 usando a fonte datasus_base_completa.
+
+Se houver mais de um lote v2 para a mesma competência, informe explicitamente
+`lote_a` e `lote_b`. Depois, use prompts como:
+
+- “Mostre hospitais com UTI em São Paulo usando o contrato v2.”
+- “Agrupe as unidades por CNPJ da mantenedora e ordene pelo total de leitos.”
+- “Compare 202012 e 202512 e mostre expansões de pelo menos 20 leitos.”
+- “Calcule o score dos leads usando pesos iguais para porte, complexidade, mix
+  pagador e tendência.”
+
+O ZIP mensal completo pode conter centenas de milhares de estabelecimentos e leva
+mais tempo e espaço que a fonte anual de hospitais e leitos.
+
+## Fontes e contratos
+
+| Fonte | Cobertura | Contrato | Características |
+|---|---|---|---|
+| `portal_sus_hospitais_leitos` | Hospitais, classificação e totais de leitos | `v1` | Arquivo anual; filtros aplicados localmente |
+| `datasus_base_completa` | Dados institucionais, habilitações e leitos por tipo | `v2` | ZIP mensal; persistência em DuckDB/Parquet |
+| CSV manual | Arquivo previamente aprovado pelo operador | `v1` | Importação confinada ao diretório configurado |
+
+O contrato `v1` mantém os 11 campos canônicos originais. O contrato aditivo `v2`
+preserva `v1` e acrescenta dados institucionais, geolocalização qualificada,
+habilitações e leitos desagregados.
+
+Leia [docs/fontes.md](docs/fontes.md) para conhecer layouts, regras de derivação,
+cache, limites e fontes investigadas.
+
+## Ferramentas disponíveis
+
+As 23 ferramentas são agrupadas por objetivo:
+
+| Grupo | Ferramentas |
+|---|---|
+| Ingestão e qualidade | `cnes_list_sources`, `cnes_list_competencias`, `cnes_fetch`, `cnes_download_instructions`, `cnes_load_data`, `cnes_normalize`, `cnes_validate_dataset` |
+| Lotes | `cnes_list_lotes`, `cnes_use_lote`, `cnes_purge` |
+| Buscas v1 | `cnes_search_cnes`, `cnes_search_municipio`, `cnes_search_uf`, `cnes_search_advanced` |
+| Análises v1 | `cnes_statistics`, `cnes_aggregate`, `cnes_timeseries`, `cnes_diff` |
+| Inteligência comercial v2 | `cnes_search_advanced_v2`, `cnes_group_by_mantenedora`, `cnes_leads_triggers`, `cnes_score_leads` |
+| Exportação | `cnes_export` |
+
+As 19 ferramentas existentes permanecem compatíveis com o contrato `v1`. As quatro
+ferramentas comerciais usam `v2`; `cnes_export` mantém `v1` por padrão e também
+suporta o perfil CRM baseado em `v2`.
+
+Inputs e outputs possuem JSON Schema. Parâmetros extras são rejeitados, CNES exige
+sete dígitos, UF exige duas letras e `limit` aceita valores de 1 a 500. Falhas
+recuperáveis são retornadas ao cliente como erro MCP, não como sucesso vazio.
+
+## Exportar para CRM
+
+`cnes_export` aceita CSV, JSON, JSONL e XLSX. Para exportar exatamente uma seleção,
+informe `cnes_list`; para repetir uma consulta paginada, use os mesmos filtros,
+`limit`, `offset` e `order_by`.
+
+Exemplo de solicitação:
+
+> Exporte estes 10 códigos CNES em JSONL com perfil crm_generico.
+
+O perfil `crm_generico` usa `cnes:cnpj` como chave de deduplicação. CSV, JSON e
+JSONL recebem proveniência por registro; XLSX recebe a aba `_metadados`. Os
+metadados incluem competência, lote, filtros, versão da fonte, timestamp e versão
+do contrato.
+
+## Dados locais, cache e retenção
+
+- Um lote fica ativo por vez, mas lotes anteriores podem ser consultados pelo
+  identificador.
+- A fonte anual reutiliza o download entre filtros do mesmo ano e revalida períodos
+  ainda abertos.
+- A base completa mantém Parquets imutáveis por lote e consulta os dados com
+  DuckDB.
+- `cnes_purge` remove caches e lotes conforme o escopo informado pela ferramenta.
+- Não apague manualmente um banco ou Parquet enquanto o servidor estiver em uso.
+
+Consulte [docs/data-retention.md](docs/data-retention.md) para a política mínima de
+dados e retenção.
+
+## Privacidade e limites de interpretação
+
+- O pipeline padrão aceita somente estabelecimentos classificados como pessoa
+  jurídica na base completa.
+- CPF e nomes de responsáveis, profissionais ou diretores não são coletados,
+  persistidos ou exportados.
+- Telefone, e-mail, CNPJ e endereço são tratados como dados institucionais.
+- No contrato `v2`, campos numéricos marcados como ausentes permanecem nulos e
+  aparecem em `campos_ausentes`; o contrato `v1` preserva sua semântica histórica.
+- `leitos_sus / leitos_existentes` representa mix cadastral de leitos, não taxa de
+  ocupação.
+- Resultados dependem da atualização e disponibilidade das fontes oficiais.
+
+## Desenvolvimento e verificação
+
+### Suíte local
+
+```powershell
+# Testes determinísticos; não acessam serviços externos
+uv run pytest -m "not live"
+
+# Qualidade estática
+uv run ruff check src tests benchmarks
+uv run pyright
+
+# Cobertura
+uv run pytest tests/unit tests/integration -m "not live" `
+  --cov=mcp_cnes.domain --cov=mcp_cnes.application `
+  --cov-report=term-missing
+
+# Contratos do SDK MCP
+uv run pytest tests/unit/test_mcp_sdk_contract.py tests/contract -m "not live"
+
+# Artefatos de distribuição
+uv build
+```
+
+Em macOS ou Linux, substitua o acento grave de continuação do PowerShell por `\`
+ou execute o comando de cobertura em uma única linha.
+
+### MCP Inspector
+
+```powershell
+uv run mcp dev src/mcp_cnes/mcp_app.py
+```
+
+### Testes externos
+
+Os testes `live` só acessam a internet quando explicitamente autorizados:
+
+```powershell
+$env:CNES_RUN_LIVE_TESTS = "1"
+uv run pytest -m live
+Remove-Item Env:CNES_RUN_LIVE_TESTS
+```
+
+O workflow `Live smoke` pode ser iniciado manualmente no GitHub Actions. O CI de
+pull requests executa auditoria de dependências, Ruff, Pyright, testes de unidade,
+integração, contratos e cobertura.
+
+## Solução de problemas
+
+### `uv` não é reconhecido
+
+Abra um novo terminal após a instalação. Use `where.exe uv` no Windows ou
+`command -v uv` em macOS/Linux. Se necessário, coloque o caminho absoluto no campo
+`command` da configuração MCP.
+
+### O cliente não mostra as ferramentas
+
+1. Execute `uv run mcp-cnes` no diretório do projeto.
+2. Confirme que o processo permanece aguardando em `stdio`.
+3. Valide o JSON do cliente e o caminho absoluto em `--directory`.
+4. Reinicie completamente o cliente MCP.
+5. Confira os logs do cliente, não apenas a janela de conversa.
+
+### `uv sync --locked` falha
+
+Confirme `uv --version` e acesso ao índice de pacotes. A `.venv` é descartável,
+mas remova somente a `.venv` deste checkout e apenas quando nenhum processo do
+MCP estiver usando seus executáveis.
+
+### Uma fonte está indisponível
+
+Use `cnes_list_sources` para obter o status e o motivo. Portal SUS e DATASUS são
+serviços externos; tente novamente apenas quando a falha for marcada como
+transitória. O servidor não substitui indisponibilidade por lista vazia.
+
+### A importação manual foi rejeitada
+
+Confirme que o arquivo é CSV, está dentro de `MCP_CNES_DATA_DIR`, respeita
+`MCP_CNES_MAX_CSV_SIZE_BYTES` e, quando configurada, consta em
+`MCP_CNES_ALLOWED_CSV_FILES`.
+
+### O banco parece bloqueado ou inconsistente
+
+Não apague o catálogo em uso. Encerre os clientes que executam o MCP e preserve os
+arquivos para diagnóstico. Use um diretório separado para smokes e validações de
+cutover.
+
+## Documentação adicional
+
+| Documento | Conteúdo |
+|---|---|
+| [Fontes e normalização](docs/fontes.md) | Origens oficiais, campos, cache e limitações |
+| [Política mínima de dados](docs/data-retention.md) | Persistência, privacidade e retenção |
+| [Cutover e rollback](docs/cutover.md) | Validação operacional e recuperação |
+| [Changelog](CHANGELOG.md) | Histórico das versões |
+| [Notas da v0.1.0](docs/releases/v0.1.0.md) | Primeira release pública |
+| [Política de segurança](SECURITY.md) | Reporte responsável de vulnerabilidades |
+
+## Estrutura do projeto
 
 ```text
-mcp_cnes/
+mcp-cnes/
 ├── pyproject.toml
 ├── uv.lock
 ├── src/mcp_cnes/
-│   ├── domain/                # modelos, regras puras e erros
-│   ├── application/           # casos de uso e Protocols
-│   ├── infrastructure/        # settings, importação segura, memória e SQLite
-│   ├── interfaces/mcp/        # servidor, tools e schemas do SDK oficial
-│   ├── mcp_app.py             # objeto descoberto pelo MCP CLI/Inspector
-│   └── __main__.py            # entrypoint stdio
-├── tests/                     # suíte automatizada e fixtures de contrato
-├── docs/cutover.md            # runbook, inventário, smoke e rollback
-├── mcp_server.py              # baseline legado de paridade aguardando remoção
-├── cnes_scraper.py            # coletor HTTP experimental
-├── cnes_playwright_collector.py
-├── sample_data.csv
-└── downloads/
+│   ├── domain/              # modelos e regras puras
+│   ├── application/         # casos de uso e portas
+│   ├── infrastructure/      # fontes, importação, persistência e exports
+│   ├── interfaces/mcp/      # servidor, tools e schemas MCP
+│   ├── mcp_app.py           # objeto usado pelo MCP CLI e Inspector
+│   └── __main__.py          # entrypoint stdio
+├── tests/                   # testes unitários, integração e contratos
+├── docs/                    # fontes, retenção, cutover e releases
+└── downloads/               # dados locais; ignorados pelo Git
 ```
 
-Dados do CNES são públicos e disponibilizados pelo Ministério da Saúde/DATASUS.
+## Licença e origem dos dados
+
+O código é distribuído sob a [licença MIT](LICENSE).
+
+Os dados do CNES são públicos e disponibilizados pelo Ministério da
+Saúde/DATASUS. A licença do código não altera os termos, a disponibilidade nem a
+responsabilidade sobre os dados de origem.
