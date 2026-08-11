@@ -5,6 +5,24 @@ Todas as mudanças relevantes deste projeto serão documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.1.2] - 2026-08-11
+
+Versão recomendada para a divulgação pública. Consulte as
+[notas completas da release](docs/releases/v0.1.2.md).
+
+### Corrigido
+
+- Deriva a versão de runtime da metadata instalada do pacote, eliminando a
+  constante que permaneceu em `0.1.0` na release `0.1.1`.
+- Garante por teste a paridade entre `pyproject.toml`, metadata da distribuição,
+  `mcp_cnes.__version__` e a versão anunciada no handshake MCP.
+
+### Segurança
+
+- Mantém integralmente o confinamento de caminhos, a proteção de `cnes_purge`, a
+  sanitização de erros e os controles de dependências e CI introduzidos antes da
+  divulgação oficial.
+
 ## [0.1.1] - 2026-08-11
 
 Versão recomendada para a divulgação pública. Consulte as
@@ -77,5 +95,6 @@ Primeira versão pública do MCP CNES. Consulte as
 - Esta release fornece um servidor MCP local via `stdio`; não inclui hospedagem ou
   operação como serviço gerenciado.
 
+[0.1.2]: https://github.com/kevyn-castelo/mcp-cnes/releases/tag/v0.1.2
 [0.1.1]: https://github.com/kevyn-castelo/mcp-cnes/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kevyn-castelo/mcp-cnes/releases/tag/v0.1.0
