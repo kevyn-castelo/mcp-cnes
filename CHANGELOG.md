@@ -5,6 +5,37 @@ Todas as mudanças relevantes deste projeto serão documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.1.1] - 2026-08-11
+
+Versão recomendada para a divulgação pública. Consulte as
+[notas completas da release](docs/releases/v0.1.1.md).
+
+### Segurança
+
+- Restringe importações e exports aos diretórios autorizados, inclusive diante de
+  traversal, caminhos absolutos indevidos e links que escapem da raiz configurada.
+- Exige habilitação administrativa e confirmação explícita para a exclusão de
+  lotes com `cnes_purge`.
+- Sanitiza respostas de erro MCP para não publicar caminhos, endpoints,
+  credenciais ou detalhes internos inesperados.
+- Adiciona CodeQL, revisão de dependências, Dependabot, CODEOWNERS, política de
+  segurança e proteção reforçada de arquivos locais no `.gitignore`.
+
+### Alterado
+
+- Torna `mcp-cnes` o entrypoint público suportado e remove wrappers, scrapers,
+  diagnósticos e scripts de limpeza legados.
+- Migra testes e CI para a arquitetura atual e mantém auditoria de dependências,
+  Ruff, Pyright, pytest e cobertura como gates.
+- Amplia a documentação de instalação, armazenamento, fontes e operação segura.
+
+### Limitações conhecidas
+
+- O servidor continua local e usa `stdio`; exposição remota requer uma camada
+  própria de autenticação, autorização, TLS, limites e auditoria.
+- O CNES descreve capacidade instalada e não representa taxa de ocupação.
+- Disponibilidade e formato dos arquivos dependem do Portal SUS e do DATASUS.
+
 ## [0.1.0] - 2026-08-10
 
 Primeira versão pública do MCP CNES. Consulte as
@@ -46,4 +77,5 @@ Primeira versão pública do MCP CNES. Consulte as
 - Esta release fornece um servidor MCP local via `stdio`; não inclui hospedagem ou
   operação como serviço gerenciado.
 
+[0.1.1]: https://github.com/kevyn-castelo/mcp-cnes/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kevyn-castelo/mcp-cnes/releases/tag/v0.1.0
